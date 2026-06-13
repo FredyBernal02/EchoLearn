@@ -30,6 +30,7 @@ DEFAULT_RATE = 0
 DEFAULT_VOLUME = 0
 DEFAULT_ENGLISH_VOICE = "en-US-JennyNeural"
 DEFAULT_SPANISH_VOICE = "es-CO-SalomeNeural"
+DEFAULT_SHADOWING_PAUSE_SECONDS = 3
 SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
@@ -69,6 +70,7 @@ class ConversionSettings:
     spanish_voice_id: str
     rate: int
     volume: int
+    shadowing_mode: bool
 
 
 @dataclass(frozen=True)
@@ -194,6 +196,25 @@ def parse_audio_script(text: str) -> tuple[list[ScriptSegment], list[str]]:
 
     add_text_segment(text[position:])
     return segments, warnings
+
+
+def add_shadowing_repeats(segments: list[ScriptSegment]) -> list[ScriptSegment]:
+    """Repeat English text segments after a short pause for shadowing practice."""
+
+    shadowed_segments: list[ScriptSegment] = []
+    for index, segment in enumerate(segments, start=1):
+        shadowed_segments.append(segment)
+        if segment.kind == "text" and segment.language == "EN":
+            print(f"Adding shadowing repeat for segment {index}")
+            shadowed_segments.append(
+                ScriptSegment(
+                    kind="pause",
+                    seconds=DEFAULT_SHADOWING_PAUSE_SECONDS,
+                )
+            )
+            shadowed_segments.append(segment)
+
+    return shadowed_segments
 
 
 def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> None:
@@ -410,6 +431,7 @@ class PDFAudiobookApp(tk.Tk):
         self.selected_spanish_voice = tk.StringVar(value=DEFAULT_SPANISH_VOICE)
         self.rate = tk.IntVar(value=DEFAULT_RATE)
         self.volume = tk.IntVar(value=DEFAULT_VOLUME)
+        self.shadowing_mode = tk.BooleanVar(value=False)
         self.progress_value = tk.DoubleVar(value=0)
 
         self._messages: queue.Queue[ProgressMessage] = queue.Queue()
@@ -522,6 +544,12 @@ class PDFAudiobookApp(tk.Tk):
         ttk.Label(settings_frame, textvariable=self.volume).grid(
             row=3, column=2, sticky="e", padx=(10, 0), pady=(12, 0)
         )
+
+        ttk.Checkbutton(
+            settings_frame,
+            text="Shadowing Mode",
+            variable=self.shadowing_mode,
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
         progress_frame = ttk.Frame(container)
         progress_frame.grid(row=4, column=0, sticky="ew", pady=(2, 16))
@@ -668,6 +696,7 @@ class PDFAudiobookApp(tk.Tk):
             ),
             rate=int(self.rate.get()),
             volume=int(self.volume.get()),
+            shadowing_mode=bool(self.shadowing_mode.get()),
         )
 
     @staticmethod
@@ -701,6 +730,9 @@ class PDFAudiobookApp(tk.Tk):
                 write_debug_text(text, DEBUG_NORMALIZED_TEXT_FILE)
 
             segments, warnings = parse_audio_script(text)
+            print(f"Shadowing Mode: {'ON' if settings.shadowing_mode else 'OFF'}")
+            if settings.shadowing_mode:
+                segments = add_shadowing_repeats(segments)
             if DEBUG_MODE:
                 write_debug_segments(segments, DEBUG_SEGMENTS_FILE)
 

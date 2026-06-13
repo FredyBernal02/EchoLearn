@@ -14,6 +14,7 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Real timed pause generation with FFmpeg
 - English and Spanish voice selectors
 - Speech rate and volume controls
+- Shadowing Mode for automatic English phrase repetition
 - MP3 output file selection
 - Page count display and progress bar
 - Friendly error messages for invalid, empty, scanned, or image-only PDFs
@@ -76,8 +77,9 @@ python3 main.py
 3. Click **Save As** and choose where to save the MP3 audiobook.
 4. Select an English voice and a Spanish voice.
 5. Adjust speech rate and volume.
-6. Click **Convert to MP3**.
-7. Wait for the progress bar and success message.
+6. Optionally enable **Shadowing Mode** for English pronunciation practice.
+7. Click **Convert to MP3**.
+8. Wait for the progress bar and success message.
 
 ## Writing PDF Scripts
 
@@ -136,6 +138,16 @@ The app will:
 If your PDF has no `[EN]` or `[ES]` tags, the app reads all text with the selected English voice.
 
 Unsupported pause tags, such as `[PAUSE_4]`, are ignored and shown as a friendly warning after conversion.
+
+## Shadowing Mode
+
+Enable **Shadowing Mode** in the app to automatically repeat each English phrase.
+After every `[EN]` speech segment, EchoLearn inserts a short pause and then plays
+the same English phrase again. This helps with pronunciation practice by giving
+you a listen-and-repeat pattern without adding any new tags to your PDF.
+
+Shadowing only applies to English text. Spanish text and explicit pause tags keep
+their normal behavior.
 
 ## Voice Options
 
