@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Archivos de audio
+*.mp3
+
+# PDFs de prueba
+*.pdf
+
+# Archivos temporales
+failed_segment.txt
+debug_normalized_text.txt
+debug_segments.txt
+
+# VSCode
+.vscode/
