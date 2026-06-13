@@ -7,6 +7,7 @@ pypdf and converts it to an MP3 audiobook using edge-tts.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import platform
 import queue
@@ -56,6 +57,7 @@ TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
 DEBUG_MODE = True
 DEBUG_SEGMENTS_FILE = Path("debug_segments.txt")
 DEBUG_NORMALIZED_TEXT_FILE = Path("debug_normalized_text.txt")
+SETTINGS_FILE = Path("echolearn_settings.json")
 
 
 class PDFAudiobookError(Exception):
@@ -794,10 +796,16 @@ class PDFAudiobookApp(tk.Tk):
         self._spanish_voice_options: list[VoiceOption] = []
         self._is_processing = False
         self._last_output_path: Path | None = None
+        self._last_input_folder = ""
+        self._last_output_folder = ""
+        self._is_loading_settings = False
 
         self._configure_style()
         self._build_ui()
         self._load_voices()
+        self._load_settings()
+        self._attach_settings_traces()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._process_worker_messages)
 
     def _configure_style(self) -> None:
@@ -1320,11 +1328,131 @@ class PDFAudiobookApp(tk.Tk):
         self.selected_english_voice.set(DEFAULT_ENGLISH_VOICE)
         self.selected_spanish_voice.set(DEFAULT_SPANISH_VOICE)
 
+    def _load_settings(self) -> None:
+        """Load saved settings from disk, ignoring missing or invalid files."""
+
+        if not SETTINGS_FILE.exists():
+            return
+
+        try:
+            settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(settings, dict):
+            return
+
+        self._is_loading_settings = True
+        try:
+            english_voice = str(settings.get("english_voice", ""))
+            spanish_voice = str(settings.get("spanish_voice", ""))
+            if english_voice in [option.label for option in self._english_voice_options]:
+                self.selected_english_voice.set(english_voice)
+            if spanish_voice in [option.label for option in self._spanish_voice_options]:
+                self.selected_spanish_voice.set(spanish_voice)
+
+            rate_label = str(settings.get("speech_rate", ""))
+            volume_label = str(settings.get("volume", ""))
+            if rate_label in RATE_OPTIONS:
+                self.selected_rate_label.set(rate_label)
+                self._update_rate_from_label()
+            if volume_label in VOLUME_OPTIONS:
+                self.selected_volume_label.set(volume_label)
+                self._update_volume_from_label()
+
+            self.shadowing_mode.set(bool(settings.get("shadowing_mode", False)))
+            self.idioms_mode.set(bool(settings.get("idioms_mode", False)))
+            self.learning_pauses.set(
+                bool(
+                    settings.get(
+                        "learning_pauses",
+                        DEFAULT_LEARNING_PAUSES_ENABLED,
+                    )
+                )
+            )
+            pause_seconds = settings.get(
+                "learning_pause_seconds",
+                DEFAULT_LEARNING_PAUSE_SECONDS,
+            )
+            try:
+                pause_seconds_value = int(pause_seconds)
+            except (TypeError, ValueError):
+                pause_seconds_value = DEFAULT_LEARNING_PAUSE_SECONDS
+            if pause_seconds_value in {1, 2, 3, 5}:
+                self.learning_pause_seconds.set(pause_seconds_value)
+            self.open_audio_when_finished.set(
+                bool(settings.get("open_audio_when_finished", False))
+            )
+
+            input_folder = settings.get("last_input_folder", "")
+            output_folder = settings.get("last_output_folder", "")
+            if isinstance(input_folder, str):
+                self._last_input_folder = input_folder
+            if isinstance(output_folder, str):
+                self._last_output_folder = output_folder
+        finally:
+            self._is_loading_settings = False
+
+    def _attach_settings_traces(self) -> None:
+        """Save settings whenever persistent UI state changes."""
+
+        watched_variables = [
+            self.selected_english_voice,
+            self.selected_spanish_voice,
+            self.selected_rate_label,
+            self.selected_volume_label,
+            self.shadowing_mode,
+            self.idioms_mode,
+            self.learning_pauses,
+            self.learning_pause_seconds,
+            self.open_audio_when_finished,
+        ]
+        for variable in watched_variables:
+            variable.trace_add("write", lambda *_args: self._save_settings())
+
+    def _settings_payload(self) -> dict[str, Any]:
+        """Return the configuration values safe to persist."""
+
+        return {
+            "english_voice": self.selected_english_voice.get(),
+            "spanish_voice": self.selected_spanish_voice.get(),
+            "speech_rate": self.selected_rate_label.get(),
+            "volume": self.selected_volume_label.get(),
+            "shadowing_mode": bool(self.shadowing_mode.get()),
+            "idioms_mode": bool(self.idioms_mode.get()),
+            "learning_pauses": bool(self.learning_pauses.get()),
+            "learning_pause_seconds": int(self.learning_pause_seconds.get()),
+            "open_audio_when_finished": bool(self.open_audio_when_finished.get()),
+            "last_input_folder": self._last_input_folder,
+            "last_output_folder": self._last_output_folder,
+        }
+
+    def _save_settings(self) -> None:
+        """Persist settings without interrupting the user on file errors."""
+
+        if self._is_loading_settings:
+            return
+
+        try:
+            SETTINGS_FILE.write_text(
+                json.dumps(self._settings_payload(), indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    def _on_close(self) -> None:
+        """Save settings before closing the application."""
+
+        self._save_settings()
+        self.destroy()
+
     def _choose_pdf(self) -> None:
         """Ask the user to select a PDF file and show the page count."""
 
+        initial_directory = self._last_input_folder or None
         path = filedialog.askopenfilename(
             title="Select a PDF file",
+            initialdir=initial_directory,
             filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
         )
         if not path:
@@ -1350,10 +1478,13 @@ class PDFAudiobookApp(tk.Tk):
             messagebox.showerror("PDF could not be loaded", str(exc))
         else:
             self.pdf_path.set(str(pdf_path))
+            self._last_input_folder = str(pdf_path.parent)
             if not self.output_path.get():
                 self.output_path.set(str(pdf_path.with_suffix(".mp3")))
+                self._last_output_folder = str(pdf_path.parent)
             self._apply_page_count(page_count)
             self.pdf_select_area.set_selected_file(pdf_path.name)
+            self._save_settings()
 
     def _choose_output(self) -> None:
         """Ask the user where the MP3 should be saved."""
@@ -1361,15 +1492,19 @@ class PDFAudiobookApp(tk.Tk):
         initial_file = "audiobook.mp3"
         if self.pdf_path.get():
             initial_file = f"{Path(self.pdf_path.get()).stem}.mp3"
+        initial_directory = self._last_output_folder or None
 
         path = filedialog.asksaveasfilename(
             title="Save audiobook as",
             defaultextension=".mp3",
             initialfile=initial_file,
+            initialdir=initial_directory,
             filetypes=[("MP3 files", "*.mp3"), ("All files", "*.*")],
         )
         if path:
             self.output_path.set(path)
+            self._last_output_folder = str(Path(path).parent)
+            self._save_settings()
 
     def _open_last_audio(self) -> None:
         """Open the most recently generated MP3."""

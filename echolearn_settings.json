@@ -1,0 +1,13 @@
+{
+  "english_voice": "en-US-JennyNeural",
+  "spanish_voice": "es-MX-JorgeNeural",
+  "speech_rate": "Slow",
+  "volume": "High",
+  "shadowing_mode": false,
+  "idioms_mode": true,
+  "learning_pauses": true,
+  "learning_pause_seconds": 2,
+  "open_audio_when_finished": true,
+  "last_input_folder": "",
+  "last_output_folder": ""
+}
