@@ -55,9 +55,51 @@ SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
 DEBUG_MODE = True
-DEBUG_SEGMENTS_FILE = Path("debug_segments.txt")
-DEBUG_NORMALIZED_TEXT_FILE = Path("debug_normalized_text.txt")
-SETTINGS_FILE = Path("echolearn_settings.json")
+APP_DATA_DIR = Path.home() / "Library" / "Application Support" / APP_TITLE
+LOGS_DIR = APP_DATA_DIR / "logs"
+DEBUG_SEGMENTS_FILE = LOGS_DIR / "debug_segments.txt"
+DEBUG_NORMALIZED_TEXT_FILE = LOGS_DIR / "debug_normalized_text.txt"
+SETTINGS_FILE = APP_DATA_DIR / "echolearn_settings.json"
+FFMPEG_NOT_FOUND_MESSAGE = (
+    "FFmpeg was not found.\n"
+    "Expected locations:\n"
+    "- /opt/homebrew/bin/ffmpeg\n"
+    "- /usr/local/bin/ffmpeg\n\n"
+    "Install with:\n\n"
+    "brew install ffmpeg"
+)
+
+
+def ensure_app_directories() -> None:
+    """Create writable user data folders used by packaged macOS builds."""
+
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def log_runtime_paths(output_path: Path | None = None) -> None:
+    """Print the app's writable paths for terminal/debug builds."""
+
+    print(f"App data directory: {APP_DATA_DIR}")
+    print(f"Temp directory: {tempfile.gettempdir()}")
+    if output_path is not None:
+        print(f"Output path: {output_path}")
+
+
+def get_ffmpeg_path() -> str:
+    """Find FFmpeg in Terminal PATH or common macOS Homebrew locations."""
+
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        print(f"FFmpeg detected at:\n{ffmpeg_path}")
+        return ffmpeg_path
+
+    for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            print(f"FFmpeg detected at:\n{candidate}")
+            return candidate
+
+    raise PDFAudiobookError(FFMPEG_NOT_FOUND_MESSAGE)
 
 
 class PDFAudiobookError(Exception):
@@ -300,6 +342,7 @@ def add_idiom_repeats(
 def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> None:
     """Write parsed segments to a debug file before audio generation starts."""
 
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
     with debug_path.open("w", encoding="utf-8") as debug_file:
         for index, segment in enumerate(segments, start=1):
             debug_file.write(f"Segment {index}\n")
@@ -313,6 +356,7 @@ def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> Non
 def write_debug_text(text: str, debug_path: Path) -> None:
     """Write normalized extracted text before parsing starts."""
 
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text(text, encoding="utf-8")
 
 
@@ -436,7 +480,10 @@ class TextToSpeechService:
 
         print(f"total parsed segments: {total_segments}")
 
-        with tempfile.TemporaryDirectory(prefix="pdf-audiobook-") as temp_folder:
+        with tempfile.TemporaryDirectory(
+            prefix="pdf-audiobook-",
+            dir=tempfile.gettempdir(),
+        ) as temp_folder:
             temp_path = Path(temp_folder)
 
             with output_path.open("wb") as final_audio:
@@ -496,8 +543,9 @@ class TextToSpeechService:
     def _create_silence_mp3(seconds: int, output_path: Path) -> None:
         """Create a real silent MP3 file using ffmpeg."""
 
+        ffmpeg_path = get_ffmpeg_path()
         command = [
-            "ffmpeg",
+            ffmpeg_path,
             "-f",
             "lavfi",
             "-i",
@@ -519,10 +567,7 @@ class TextToSpeechService:
                 stderr=subprocess.DEVNULL,
             )
         except FileNotFoundError as exc:
-            raise PDFAudiobookError(
-                "FFmpeg is required to generate real pauses. Please install it with: "
-                "brew install ffmpeg"
-            ) from exc
+            raise PDFAudiobookError(FFMPEG_NOT_FOUND_MESSAGE) from exc
         except subprocess.CalledProcessError as exc:
             raise PDFAudiobookError(
                 "FFmpeg could not generate a pause segment."
@@ -1433,6 +1478,7 @@ class PDFAudiobookApp(tk.Tk):
             return
 
         try:
+            SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
             SETTINGS_FILE.write_text(
                 json.dumps(self._settings_payload(), indent=2),
                 encoding="utf-8",
@@ -1716,6 +1762,7 @@ class PDFAudiobookApp(tk.Tk):
         """Worker-thread conversion body."""
 
         try:
+            log_runtime_paths(settings.output_path)
             self._messages.put(ProgressMessage("status", "Processing PDF..."))
 
             def progress_callback(page: int, total: int) -> None:
@@ -1727,7 +1774,10 @@ class PDFAudiobookApp(tk.Tk):
 
             text = extract_text_from_pdf(settings.pdf_path, progress_callback)
             if DEBUG_MODE:
-                write_debug_text(text, DEBUG_NORMALIZED_TEXT_FILE)
+                try:
+                    write_debug_text(text, DEBUG_NORMALIZED_TEXT_FILE)
+                except OSError:
+                    traceback.print_exc()
 
             segments, warnings = parse_audio_script(text)
             print(f"Idioms Mode: {'ON' if settings.idioms_mode else 'OFF'}")
@@ -1741,7 +1791,10 @@ class PDFAudiobookApp(tk.Tk):
             if settings.shadowing_mode:
                 segments = add_shadowing_repeats(segments)
             if DEBUG_MODE:
-                write_debug_segments(segments, DEBUG_SEGMENTS_FILE)
+                try:
+                    write_debug_segments(segments, DEBUG_SEGMENTS_FILE)
+                except OSError:
+                    traceback.print_exc()
 
             self._messages.put(
                 ProgressMessage(
@@ -1798,7 +1851,11 @@ class PDFAudiobookApp(tk.Tk):
 
         preview_path: Path | None = None
         try:
-            fd, path = tempfile.mkstemp(prefix="echolearn-preview-", suffix=".mp3")
+            fd, path = tempfile.mkstemp(
+                prefix="echolearn-preview-",
+                suffix=".mp3",
+                dir=tempfile.gettempdir(),
+            )
             os.close(fd)
             preview_path = Path(path)
 
@@ -1893,6 +1950,8 @@ class PDFAudiobookApp(tk.Tk):
 def main() -> None:
     """Application entry point."""
 
+    ensure_app_directories()
+    log_runtime_paths()
     app = PDFAudiobookApp()
     app.mainloop()
 

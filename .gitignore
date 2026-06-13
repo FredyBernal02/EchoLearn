@@ -18,3 +18,8 @@ debug_segments.txt
 
 # VSCode
 .vscode/
+
+# PyInstaller
+build/
+dist/
+*.spec

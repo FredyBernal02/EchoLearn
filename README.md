@@ -217,8 +217,9 @@ currently selected English and Spanish voices before generating a full audiobook
 ## Saved Settings
 
 EchoLearn remembers your last selected voices, learning modes, folders, speech
-rate, and volume. Settings are saved automatically in `echolearn_settings.json`
-when you change options, choose files, or close the app.
+rate, and volume. On macOS, settings are saved automatically at
+`~/Library/Application Support/EchoLearn/echolearn_settings.json` when you
+change options, choose files, or close the app.
 
 ## Voice Options
 
