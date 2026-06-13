@@ -1,4 +1,6 @@
-# PDF Audiobook Converter
+# EchoLearn
+
+Convert PDFs into natural-sounding audiobooks using Microsoft Edge TTS voices, bilingual narration, and real FFmpeg-generated pauses.
 
 A cross-platform desktop app that converts selectable-text PDF files into MP3 audiobooks.
 
@@ -19,10 +21,12 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 ## Project Structure
 
 ```text
-pdf_audiobook/
+EchoLearn/
+├── assets/
 ├── main.py
 ├── requirements.txt
-└── README.md
+├── README.md
+└── .gitignore
 ```
 
 ## Installation
@@ -166,3 +170,43 @@ Spanish voices:
 - **No MP3 created:** Check your internet connection, try saving to a folder where you have write permission, or try a shorter PDF first.
 - **FFmpeg missing:** Install FFmpeg so the app can generate real pauses.
 - **pyaudiop or pyaudioop error:** Reinstall dependencies with the updated `requirements.txt`; the current app does not use the package that caused this error.
+
+---
+
+# Version History
+
+## v1.0.0 - June 2026
+
+Initial public release.
+
+### Features
+- PDF to MP3 conversion
+- Edge TTS integration
+- English and Spanish voice support
+- Automatic language switching using [EN] and [ES]
+- Real pause generation using FFmpeg
+- Adjustable speech rate and volume
+- Desktop GUI built with Tkinter
+
+---
+
+# Roadmap
+
+## v1.1.0
+- Emotional speaking styles
+- Voice preview button
+- Improved narration quality
+
+## v1.2.0
+- Chapter export
+- Chapter navigation
+
+## v1.3.0
+- Background processing
+- Better progress estimation
+- Enhanced error handling
+
+## v2.0.0
+- Windows installer
+- macOS installer
+- Automatic updates
