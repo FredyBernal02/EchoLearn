@@ -1,3 +1,2 @@
 pypdf
 edge-tts
-tkinterdnd2

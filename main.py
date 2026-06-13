@@ -28,13 +28,6 @@ import edge_tts
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
-try:
-    from tkinterdnd2 import DND_FILES, TkinterDnD
-except ImportError:
-    DND_FILES = None
-    TkinterDnD = None
-
-
 APP_TITLE = "EchoLearn"
 DEFAULT_RATE = 0
 DEFAULT_VOLUME = 0
@@ -43,6 +36,20 @@ DEFAULT_SPANISH_VOICE = "es-CO-SalomeNeural"
 DEFAULT_SHADOWING_PAUSE_SECONDS = 3
 DEFAULT_LEARNING_PAUSES_ENABLED = True
 DEFAULT_LEARNING_PAUSE_SECONDS = 2
+RATE_OPTIONS = {
+    "Very Slow": -50,
+    "Slow": -25,
+    "Normal": 0,
+    "Fast": 25,
+    "Very Fast": 50,
+}
+VOLUME_OPTIONS = {
+    "Very Low": -50,
+    "Low": -25,
+    "Normal": 0,
+    "High": 25,
+    "Very High": 50,
+}
 SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
@@ -122,9 +129,6 @@ class ProgressMessage:
 
     kind: str
     payload: Any = None
-
-
-DND_TK_BASE = TkinterDnD.Tk if TkinterDnD is not None else tk.Tk
 
 
 def normalize_text(text: str) -> str:
@@ -685,14 +689,87 @@ class AnimatedProgressBar(tk.Canvas):
                 stripe_start += 40
 
 
-class PDFAudiobookApp(DND_TK_BASE):
+class PDFSelectArea(tk.Canvas):
+    """Modern clickable PDF selection area."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        *,
+        browse_callback: Callable[[], None],
+    ) -> None:
+        super().__init__(
+            parent,
+            height=82,
+            bg="#191c24",
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        self.browse_callback = browse_callback
+        self._selected_filename = ""
+        self.bind("<Configure>", lambda _event: self._draw())
+        self.bind("<Button-1>", lambda _event: self.browse_callback())
+        self._draw()
+
+    def set_selected_file(self, filename: str) -> None:
+        """Show only the current selected PDF name after loading."""
+
+        self._selected_filename = filename
+        self._draw()
+
+    def reset_state(self) -> None:
+        """Redraw the current selection state."""
+
+        self._draw()
+
+    def _draw(self) -> None:
+        self.delete("all")
+        width = max(self.winfo_width(), 1)
+        height = max(self.winfo_height(), 1)
+        border = "#3b4251"
+        fill = "#10131a"
+        title = "Click to choose PDF"
+        subtitle = "Browse from your computer"
+        if self._selected_filename:
+            title = self._selected_filename
+            subtitle = ""
+
+        self.create_rectangle(
+            2,
+            2,
+            width - 2,
+            height - 2,
+            fill=fill,
+            outline=border,
+            width=2,
+            dash=(8, 5),
+        )
+        self.create_text(
+            width / 2,
+            height / 2 - 12,
+            text=title,
+            fill="#eef2f8",
+            font=("TkDefaultFont", 15, "bold"),
+        )
+        if subtitle:
+            self.create_text(
+                width / 2,
+                height / 2 + 14,
+                text=subtitle,
+                fill="#9aa4b2",
+                font=("TkDefaultFont", 10),
+            )
+
+
+class PDFAudiobookApp(tk.Tk):
     """Main Tkinter window for the PDF audiobook converter."""
 
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1040x760")
-        self.minsize(900, 700)
+        self.geometry("940x680")
+        self.minsize(720, 520)
 
         self.pdf_path = tk.StringVar()
         self.output_path = tk.StringVar()
@@ -702,6 +779,8 @@ class PDFAudiobookApp(DND_TK_BASE):
         self.selected_spanish_voice = tk.StringVar(value=DEFAULT_SPANISH_VOICE)
         self.rate = tk.IntVar(value=DEFAULT_RATE)
         self.volume = tk.IntVar(value=DEFAULT_VOLUME)
+        self.selected_rate_label = tk.StringVar(value="Normal")
+        self.selected_volume_label = tk.StringVar(value="Normal")
         self.shadowing_mode = tk.BooleanVar(value=False)
         self.idioms_mode = tk.BooleanVar(value=False)
         self.learning_pauses = tk.BooleanVar(value=DEFAULT_LEARNING_PAUSES_ENABLED)
@@ -763,7 +842,7 @@ class PDFAudiobookApp(DND_TK_BASE):
             "Section.TLabel",
             background="#191c24",
             foreground="#ffffff",
-            font=("TkDefaultFont", 17, "bold"),
+            font=("TkDefaultFont", 16, "bold"),
             padding=(0, 0),
         )
         style.configure(
@@ -778,7 +857,7 @@ class PDFAudiobookApp(DND_TK_BASE):
             foreground="#ffffff",
             borderwidth=0,
             focusthickness=0,
-            padding=(16, 10),
+            padding=(14, 8),
             font=("TkDefaultFont", 11, "bold"),
         )
         style.map(
@@ -790,7 +869,7 @@ class PDFAudiobookApp(DND_TK_BASE):
             "Primary.TButton",
             background="#1db954",
             foreground="#07110a",
-            padding=(22, 13),
+            padding=(20, 11),
             font=("TkDefaultFont", 12, "bold"),
         )
         style.map(
@@ -825,12 +904,6 @@ class PDFAudiobookApp(DND_TK_BASE):
             selectforeground=[("readonly", "#eef2f8")],
         )
         style.configure(
-            "Horizontal.TScale",
-            background="#191c24",
-            troughcolor="#303644",
-            sliderthickness=18,
-        )
-        style.configure(
             "Horizontal.TProgressbar",
             background="#1db954",
             troughcolor="#242833",
@@ -842,13 +915,13 @@ class PDFAudiobookApp(DND_TK_BASE):
     def _build_ui(self) -> None:
         """Create all visual controls."""
 
-        container = ttk.Frame(self, padding=(28, 24), style="App.TFrame")
+        container = ttk.Frame(self, padding=(20, 18), style="App.TFrame")
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
         container.rowconfigure(1, weight=1)
 
         header = ttk.Frame(container, style="App.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 24))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         header.columnconfigure(0, weight=1)
 
         ttk.Label(header, text="EchoLearn", style="Title.TLabel").grid(
@@ -858,171 +931,193 @@ class PDFAudiobookApp(DND_TK_BASE):
             row=1, column=0, sticky="w", pady=(5, 0)
         )
 
-        content = ttk.Frame(container, style="App.TFrame")
-        content.grid(row=1, column=0, sticky="nsew")
+        scroll_area = ttk.Frame(container, style="App.TFrame")
+        scroll_area.grid(row=1, column=0, sticky="nsew")
+        scroll_area.columnconfigure(0, weight=1)
+        scroll_area.rowconfigure(0, weight=1)
+
+        self.content_canvas = tk.Canvas(
+            scroll_area,
+            bg="#0f1117",
+            highlightthickness=0,
+            bd=0,
+        )
+        self.content_canvas.grid(row=0, column=0, sticky="nsew")
+
+        content = ttk.Frame(self.content_canvas, style="App.TFrame")
+        self.content_window = self.content_canvas.create_window(
+            (0, 0),
+            window=content,
+            anchor="nw",
+        )
+        content.bind("<Configure>", self._update_scroll_region)
+        self.content_canvas.bind("<Configure>", self._resize_scroll_content)
+
         content.columnconfigure(0, weight=1)
         content.columnconfigure(1, weight=1)
         content.rowconfigure(1, weight=1)
 
-        pdf_card = self._create_card(content)
-        pdf_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 16))
-        pdf_card.columnconfigure(1, weight=1)
-        self._add_card_header(pdf_card, "PDF", "Source script", "pdf")
+        self.pdf_card = self._create_card(content)
+        self.pdf_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
+        self.pdf_card.columnconfigure(0, weight=1)
+        self.pdf_card.columnconfigure(1, weight=1)
+        self._add_card_header(self.pdf_card, "PDF", "Source script", "pdf")
 
-        drop_text = "Drop a PDF here or choose one from your computer"
-        if DND_FILES is None:
-            drop_text = "Choose a PDF from your computer"
-        ttk.Label(pdf_card, text=drop_text, style="Muted.TLabel").grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(16, 4)
+        self.pdf_select_area = PDFSelectArea(
+            self.pdf_card,
+            browse_callback=self._choose_pdf,
         )
-        ttk.Entry(pdf_card, textvariable=self.pdf_path).grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 12)
+        self.pdf_select_area.grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(14, 10)
         )
-        ttk.Button(pdf_card, text="Browse PDF", command=self._choose_pdf).grid(
+        ttk.Entry(self.pdf_card, textvariable=self.pdf_path).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10)
+        )
+        ttk.Button(self.pdf_card, text="Browse PDF", command=self._choose_pdf).grid(
             row=3, column=0, sticky="w"
         )
-        ttk.Label(pdf_card, textvariable=self.page_count, style="Muted.TLabel").grid(
+        ttk.Label(self.pdf_card, textvariable=self.page_count, style="Muted.TLabel").grid(
             row=3, column=1, sticky="e"
         )
 
-        voices_card = self._create_card(content)
-        voices_card.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=(0, 16))
-        voices_card.columnconfigure(1, weight=1)
-        self._add_card_header(voices_card, "Voices", "Bilingual narration", "voices")
+        self.voices_card = self._create_card(content)
+        self.voices_card.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
+        self.voices_card.columnconfigure(1, weight=1)
+        self._add_card_header(self.voices_card, "Voices", "Bilingual narration", "voices")
 
-        ttk.Label(voices_card, text="English voice").grid(
-            row=1, column=0, sticky="w", pady=(16, 0)
+        ttk.Label(self.voices_card, text="English voice").grid(
+            row=1, column=0, sticky="w", pady=(14, 0)
         )
         self.english_voice_menu = ttk.Combobox(
-            voices_card,
+            self.voices_card,
             textvariable=self.selected_english_voice,
             state="readonly",
             values=[],
         )
-        self.english_voice_menu.grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=(16, 0))
+        self.english_voice_menu.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=(14, 0))
 
-        ttk.Label(voices_card, text="Spanish voice").grid(
-            row=2, column=0, sticky="w", pady=(14, 0)
+        ttk.Label(self.voices_card, text="Spanish voice").grid(
+            row=2, column=0, sticky="w", pady=(12, 0)
         )
         self.spanish_voice_menu = ttk.Combobox(
-            voices_card,
+            self.voices_card,
             textvariable=self.selected_spanish_voice,
             state="readonly",
             values=[],
         )
         self.spanish_voice_menu.grid(
-            row=2, column=1, sticky="ew", padx=(14, 0), pady=(14, 0)
+            row=2, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
         )
 
         self.preview_button = ttk.Button(
-            voices_card,
+            self.voices_card,
             text="Preview Voice",
             command=self._start_voice_preview,
         )
         self.preview_button.grid(
-            row=3, column=1, sticky="w", padx=(14, 0), pady=(18, 0)
+            row=3, column=1, sticky="w", padx=(12, 0), pady=(14, 0)
         )
 
-        learning_card = self._create_card(content)
-        learning_card.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
-        learning_card.columnconfigure(1, weight=1)
+        self.learning_card = self._create_card(content)
+        self.learning_card.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
+        self.learning_card.columnconfigure(1, weight=1)
         self._add_card_header(
-            learning_card,
+            self.learning_card,
             "Learning Modes",
             "Practice patterns",
             "learning",
         )
 
-        ttk.Label(learning_card, text="Speech rate").grid(
-            row=1, column=0, sticky="w", pady=(18, 0)
+        ttk.Label(self.learning_card, text="Speech rate").grid(
+            row=1, column=0, sticky="w", pady=(14, 0)
         )
-        ttk.Scale(
-            learning_card,
-            from_=-50,
-            to=50,
-            orient=tk.HORIZONTAL,
-            variable=self.rate,
-        ).grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=(18, 0))
-        ttk.Label(learning_card, textvariable=self.rate, style="Muted.TLabel").grid(
-            row=1, column=2, sticky="e", padx=(10, 0), pady=(18, 0)
+        self.rate_menu = ttk.Combobox(
+            self.learning_card,
+            textvariable=self.selected_rate_label,
+            state="readonly",
+            values=list(RATE_OPTIONS),
         )
+        self.rate_menu.grid(
+            row=1, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(14, 0)
+        )
+        self.rate_menu.bind("<<ComboboxSelected>>", self._update_rate_from_label)
 
-        ttk.Label(learning_card, text="Volume").grid(
-            row=2, column=0, sticky="w", pady=(14, 0)
+        ttk.Label(self.learning_card, text="Volume").grid(
+            row=2, column=0, sticky="w", pady=(12, 0)
         )
-        ttk.Scale(
-            learning_card,
-            from_=-50,
-            to=50,
-            orient=tk.HORIZONTAL,
-            variable=self.volume,
-        ).grid(row=2, column=1, sticky="ew", padx=(14, 0), pady=(14, 0))
-        ttk.Label(learning_card, textvariable=self.volume, style="Muted.TLabel").grid(
-            row=2, column=2, sticky="e", padx=(10, 0), pady=(14, 0)
+        self.volume_menu = ttk.Combobox(
+            self.learning_card,
+            textvariable=self.selected_volume_label,
+            state="readonly",
+            values=list(VOLUME_OPTIONS),
         )
+        self.volume_menu.grid(
+            row=2, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(12, 0)
+        )
+        self.volume_menu.bind("<<ComboboxSelected>>", self._update_volume_from_label)
 
         ToggleSwitch(
-            learning_card,
+            self.learning_card,
             text="Shadowing Mode",
             variable=self.shadowing_mode,
             background="#191c24",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(20, 0))
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 0))
 
         ToggleSwitch(
-            learning_card,
+            self.learning_card,
             text="Idioms Mode",
             variable=self.idioms_mode,
             background="#191c24",
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         ToggleSwitch(
-            learning_card,
+            self.learning_card,
             text="Learning Pauses",
             variable=self.learning_pauses,
             background="#191c24",
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        ttk.Label(learning_card, text="Learning pause seconds").grid(
-            row=6, column=0, sticky="w", pady=(12, 0)
+        ttk.Label(self.learning_card, text="Learning pause seconds").grid(
+            row=6, column=0, sticky="w", pady=(10, 0)
         )
         self.learning_pause_menu = ttk.Combobox(
-            learning_card,
+            self.learning_card,
             textvariable=self.learning_pause_seconds,
             state="readonly",
             values=[1, 2, 3, 5],
             width=6,
         )
         self.learning_pause_menu.grid(
-            row=6, column=1, sticky="w", padx=(14, 0), pady=(12, 0)
+            row=6, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
         )
 
-        conversion_card = self._create_card(content)
-        conversion_card.grid(row=1, column=1, sticky="nsew", padx=(10, 0))
-        conversion_card.columnconfigure(0, weight=1)
-        conversion_card.columnconfigure(1, weight=0)
+        self.conversion_card = self._create_card(content)
+        self.conversion_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
+        self.conversion_card.columnconfigure(0, weight=1)
+        self.conversion_card.columnconfigure(1, weight=0)
         self._add_card_header(
-            conversion_card,
+            self.conversion_card,
             "Conversion",
             "Export your audiobook",
             "conversion",
         )
 
-        ttk.Entry(conversion_card, textvariable=self.output_path).grid(
-            row=1, column=0, sticky="ew", pady=(18, 12), padx=(0, 10)
+        ttk.Entry(self.conversion_card, textvariable=self.output_path).grid(
+            row=1, column=0, sticky="ew", pady=(14, 10), padx=(0, 8)
         )
         ttk.Button(
-            conversion_card,
+            self.conversion_card,
             text="Save As",
             command=self._choose_output,
-        ).grid(row=1, column=1, sticky="e", pady=(18, 12))
+        ).grid(row=1, column=1, sticky="e", pady=(14, 10))
 
         self.progress_bar = AnimatedProgressBar(
-            conversion_card,
+            self.conversion_card,
             variable=self.progress_value,
         )
-        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 10))
+        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 8))
 
-        progress_meta = ttk.Frame(conversion_card, style="Card.TFrame")
+        progress_meta = ttk.Frame(self.conversion_card, style="Card.TFrame")
         progress_meta.grid(row=3, column=0, columnspan=2, sticky="ew")
         progress_meta.columnconfigure(0, weight=1)
         ttk.Label(
@@ -1037,23 +1132,23 @@ class PDFAudiobookApp(DND_TK_BASE):
         ).grid(row=0, column=1, sticky="e")
 
         ttk.Label(
-            conversion_card,
+            self.conversion_card,
             textvariable=self.status_text,
             style="Muted.TLabel",
             wraplength=300,
         ).grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=(8, 18)
+            row=4, column=0, columnspan=2, sticky="w", pady=(6, 12)
         )
 
         ToggleSwitch(
-            conversion_card,
+            self.conversion_card,
             text="Open audio automatically when finished",
             variable=self.open_audio_when_finished,
             background="#191c24",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 16))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
-        action_row = ttk.Frame(conversion_card, style="Card.TFrame")
-        action_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        action_row = ttk.Frame(self.conversion_card, style="Card.TFrame")
+        action_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         action_row.columnconfigure(0, weight=1)
         action_row.columnconfigure(1, weight=1)
 
@@ -1074,20 +1169,79 @@ class PDFAudiobookApp(DND_TK_BASE):
         self.open_folder_button.configure(state=tk.DISABLED)
 
         self.convert_button = ttk.Button(
-            conversion_card,
+            self.conversion_card,
             text="Convert to MP3",
             style="Primary.TButton",
             command=self._start_conversion,
         )
         self.convert_button.grid(row=7, column=0, columnspan=2, sticky="ew")
 
-        self._configure_drag_and_drop()
+        self._bind_scroll_events(self)
 
     def _create_card(self, parent: tk.Widget) -> ttk.Frame:
         """Create a dark card container."""
 
-        card = ttk.Frame(parent, padding=22, style="Card.TFrame")
+        card = ttk.Frame(parent, padding=16, style="Card.TFrame")
         return card
+
+    def _update_scroll_region(self, _event: tk.Event) -> None:
+        """Keep the scrollable content region aligned with its children."""
+
+        self.content_canvas.configure(scrollregion=self.content_canvas.bbox("all"))
+
+    def _resize_scroll_content(self, event: tk.Event) -> None:
+        """Resize the inner content frame to the visible canvas width."""
+
+        self.content_canvas.itemconfigure(self.content_window, width=event.width)
+        self._reflow_cards(event.width)
+
+    def _reflow_cards(self, width: int) -> None:
+        """Switch cards between two-column and single-column layouts."""
+
+        if width < 820:
+            self.pdf_card.grid_configure(row=0, column=0, padx=0, pady=(0, 12))
+            self.voices_card.grid_configure(row=1, column=0, padx=0, pady=(0, 12))
+            self.learning_card.grid_configure(row=2, column=0, padx=0, pady=(0, 12))
+            self.conversion_card.grid_configure(row=3, column=0, padx=0, pady=(0, 0))
+        else:
+            self.pdf_card.grid_configure(row=0, column=0, padx=(0, 8), pady=(0, 12))
+            self.voices_card.grid_configure(row=0, column=1, padx=(8, 0), pady=(0, 12))
+            self.learning_card.grid_configure(row=1, column=0, padx=(0, 8), pady=(0, 0))
+            self.conversion_card.grid_configure(row=1, column=1, padx=(8, 0), pady=(0, 0))
+
+    def _bind_scroll_events(self, widget: tk.Widget) -> None:
+        """Bind scroll events across the app content tree."""
+
+        widget.bind("<MouseWheel>", self._on_mousewheel, add="+")
+        widget.bind("<Button-4>", self._on_mousewheel, add="+")
+        widget.bind("<Button-5>", self._on_mousewheel, add="+")
+        for child in widget.winfo_children():
+            self._bind_scroll_events(child)
+
+    def _on_mousewheel(self, event: tk.Event) -> str:
+        """Scroll the main content with the mouse wheel or trackpad."""
+
+        if getattr(event, "num", None) == 4:
+            self.content_canvas.yview_scroll(-3, "units")
+        elif getattr(event, "num", None) == 5:
+            self.content_canvas.yview_scroll(3, "units")
+        elif event.delta:
+            scroll_units = self._scroll_units_from_delta(event.delta)
+            if scroll_units:
+                self.content_canvas.yview_scroll(scroll_units, "units")
+        return "break"
+
+    @staticmethod
+    def _scroll_units_from_delta(delta: int) -> int:
+        """Normalize wheel and trackpad deltas across platforms."""
+
+        if platform.system() == "Darwin":
+            return -1 if delta > 0 else 1
+
+        units = int(-1 * (delta / 120))
+        if units == 0:
+            return -1 if delta > 0 else 1
+        return units
 
     def _add_card_header(
         self,
@@ -1166,32 +1320,6 @@ class PDFAudiobookApp(DND_TK_BASE):
         self.selected_english_voice.set(DEFAULT_ENGLISH_VOICE)
         self.selected_spanish_voice.set(DEFAULT_SPANISH_VOICE)
 
-    def _configure_drag_and_drop(self) -> None:
-        """Enable PDF drag and drop when tkinterdnd2 is available."""
-
-        if DND_FILES is None:
-            return
-
-        try:
-            self.drop_target_register(DND_FILES)
-            self.dnd_bind("<<Drop>>", self._handle_pdf_drop)
-        except tk.TclError:
-            pass
-
-    def _handle_pdf_drop(self, event: tk.Event) -> None:
-        """Load the first dropped PDF file."""
-
-        dropped_paths = self.tk.splitlist(str(event.data))
-        if not dropped_paths:
-            return
-
-        pdf_path = Path(dropped_paths[0])
-        if pdf_path.suffix.lower() != ".pdf":
-            messagebox.showerror("Invalid file", "Please drop a PDF file.")
-            return
-
-        self._load_pdf(pdf_path)
-
     def _choose_pdf(self) -> None:
         """Ask the user to select a PDF file and show the page count."""
 
@@ -1205,16 +1333,27 @@ class PDFAudiobookApp(DND_TK_BASE):
         self._load_pdf(Path(path))
 
     def _load_pdf(self, pdf_path: Path) -> None:
-        """Load a PDF into the UI from Browse or drag and drop."""
+        """Load a PDF into the UI from Browse or the clickable PDF area."""
 
-        self.pdf_path.set(str(pdf_path))
-        if not self.output_path.get():
-            self.output_path.set(str(pdf_path.with_suffix(".mp3")))
+        if pdf_path.suffix.lower() != ".pdf":
+            self.pdf_select_area.reset_state()
+            messagebox.showerror(
+                "Invalid file",
+                "That file is not a PDF. Please choose a PDF file.",
+            )
+            return
 
         try:
-            self._update_page_count(pdf_path)
+            page_count = self._read_pdf_page_count(pdf_path)
         except Exception as exc:
+            self.pdf_select_area.reset_state()
             messagebox.showerror("PDF could not be loaded", str(exc))
+        else:
+            self.pdf_path.set(str(pdf_path))
+            if not self.output_path.get():
+                self.output_path.set(str(pdf_path.with_suffix(".mp3")))
+            self._apply_page_count(page_count)
+            self.pdf_select_area.set_selected_file(pdf_path.name)
 
     def _choose_output(self) -> None:
         """Ask the user where the MP3 should be saved."""
@@ -1279,12 +1418,23 @@ class PDFAudiobookApp(DND_TK_BASE):
     def _update_page_count(self, pdf_path: Path) -> None:
         """Read and display the number of pages in the selected PDF."""
 
+        count = self._read_pdf_page_count(pdf_path)
+        self._apply_page_count(count)
+
+    @staticmethod
+    def _read_pdf_page_count(pdf_path: Path) -> int:
+        """Return the number of pages in a valid PDF."""
+
         try:
             reader = PdfReader(str(pdf_path))
-            count = len(reader.pages)
         except Exception as exc:
             traceback.print_exc()
             raise
+
+        return len(reader.pages)
+
+    def _apply_page_count(self, count: int) -> None:
+        """Display loaded PDF page count and ready status."""
 
         self.page_count.set(f"Pages: {count}")
         self.status_text.set("PDF loaded. Choose the output file and convert.")
@@ -1407,6 +1557,18 @@ class PDFAudiobookApp(DND_TK_BASE):
             if option.label == selected_label:
                 return option.voice_id
         return selected_label or default_voice_id
+
+    def _update_rate_from_label(self, _event: tk.Event | None = None) -> None:
+        """Map the selected speech-rate label to the internal TTS value."""
+
+        self.rate.set(RATE_OPTIONS.get(self.selected_rate_label.get(), DEFAULT_RATE))
+
+    def _update_volume_from_label(self, _event: tk.Event | None = None) -> None:
+        """Map the selected volume label to the internal TTS value."""
+
+        self.volume.set(
+            VOLUME_OPTIONS.get(self.selected_volume_label.get(), DEFAULT_VOLUME)
+        )
 
     def _set_progress(self, percent: float) -> None:
         """Update progress value and percentage label together."""
@@ -1588,6 +1750,7 @@ class PDFAudiobookApp(DND_TK_BASE):
 
         self._is_processing = False
         self.progress_bar.stop()
+        self.pdf_select_area.reset_state()
         self.convert_button.configure(state=tk.NORMAL)
         self.preview_button.configure(state=tk.NORMAL)
 

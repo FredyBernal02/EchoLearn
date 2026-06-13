@@ -19,7 +19,7 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Idioms Mode for English-Spanish-English learning patterns
 - Learning Pauses for timed practice gaps in Idioms Mode
 - Modern dark interface with toggle switches
-- PDF drag and drop support
+- Clickable PDF selection area with Browse PDF fallback
 - Detailed progress with page, segment, and percentage updates
 - Open Audio and Open Folder actions after conversion
 - MP3 output file selection
@@ -79,7 +79,7 @@ python3 main.py
 
 ## Usage
 
-1. Drag a PDF onto the app or click **Browse PDF** and choose a PDF file.
+1. Click the PDF selection area or click **Browse PDF** and choose a PDF file.
 2. Confirm the page count shown by the app.
 3. Click **Save As** and choose where to save the MP3 audiobook.
 4. Select an English voice and a Spanish voice.
@@ -95,8 +95,12 @@ EchoLearn uses a dark, card-based desktop interface with modern toggle switches
 for learning modes, larger controls, and a progress area that shows both the
 current task and percentage completed.
 
-PDF drag and drop is supported through `tkinterdnd2`. The **Browse PDF** button
-remains available on every platform.
+The PDF section includes a clickable selection area and a **Browse PDF** button.
+Both open the same file picker and load the selected PDF.
+
+Speech rate uses simple dropdown options: **Very Slow**, **Slow**, **Normal**,
+**Fast**, and **Very Fast**. Volume uses **Very Low**, **Low**, **Normal**,
+**High**, and **Very High**.
 
 ## Writing PDF Scripts
 
@@ -249,7 +253,7 @@ Spanish voices:
 
 ## v1.3.0 - June 2026
 
-UX refresh with modern dark cards, toggle switches, PDF drag and drop, animated
+UX refresh with modern dark cards, toggle switches, clickable PDF selection, animated
 progress with percentage and task text, and post-conversion Open Audio/Open
 Folder actions.
 
