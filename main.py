@@ -7,11 +7,15 @@ pypdf and converts it to an MP3 audiobook using edge-tts.
 from __future__ import annotations
 
 import asyncio
+import os
+import platform
 import queue
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import tkinter as tk
 import traceback
 from collections.abc import Callable
@@ -71,6 +75,16 @@ class ConversionSettings:
     rate: int
     volume: int
     shadowing_mode: bool
+
+
+@dataclass(frozen=True)
+class VoicePreviewSettings:
+    """Voice settings selected by the user for a short preview."""
+
+    english_voice_id: str
+    spanish_voice_id: str
+    rate: int
+    volume: int
 
 
 @dataclass(frozen=True)
@@ -243,7 +257,6 @@ class TextToSpeechService:
         VoiceOption("en-US-JennyNeural", "en-US-JennyNeural", "Female"),
         VoiceOption("en-US-GuyNeural", "en-US-GuyNeural", "Male"),
         VoiceOption("en-US-AriaNeural", "en-US-AriaNeural", "Female"),
-        VoiceOption("en-US-DavisNeural", "en-US-DavisNeural", "Male"),
     )
     SPANISH_VOICES: tuple[VoiceOption, ...] = (
         VoiceOption("es-CO-SalomeNeural", "es-CO-SalomeNeural", "Female"),
@@ -297,6 +310,45 @@ class TextToSpeechService:
                 "The audio file was not created. Check your internet connection, "
                 "try a different output folder, or try a shorter PDF."
             )
+
+    def save_preview_to_mp3(
+        self,
+        output_path: Path,
+        *,
+        english_voice_id: str,
+        spanish_voice_id: str,
+        rate: int,
+        volume: int,
+    ) -> None:
+        """Generate a short bilingual voice preview MP3."""
+
+        segments = [
+            ScriptSegment(
+                kind="text",
+                text="Hello. This is a sample of the selected English voice.",
+                language="EN",
+            ),
+            ScriptSegment(
+                kind="text",
+                text="Hola. Esta es una muestra de la voz española seleccionada.",
+                language="ES",
+            ),
+        ]
+
+        asyncio.run(
+            self._save_all_segments_with_edge_tts(
+                segments=segments,
+                output_path=output_path,
+                english_voice_id=english_voice_id,
+                spanish_voice_id=spanish_voice_id,
+                rate=rate,
+                volume=volume,
+                progress_callback=lambda _current, _total: None,
+            )
+        )
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise PDFAudiobookError("The preview audio file was not created.")
 
     @staticmethod
     async def _save_all_segments_with_edge_tts(
@@ -414,6 +466,43 @@ class TextToSpeechService:
             raise PDFAudiobookError("FFmpeg created an empty pause segment.")
 
 
+def play_audio_file(audio_path: Path) -> None:
+    """Play an audio file with a platform-appropriate command."""
+
+    system_name = platform.system()
+
+    try:
+        if system_name == "Darwin":
+            subprocess.run(["afplay", str(audio_path)], check=True)
+            return
+
+        if system_name == "Windows":
+            os.startfile(str(audio_path))  # type: ignore[attr-defined]
+            time.sleep(10)
+            return
+
+        linux_players = [
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio_path)],
+            ["mpg123", str(audio_path)],
+            ["mpg321", str(audio_path)],
+            ["play", str(audio_path)],
+            ["paplay", str(audio_path)],
+        ]
+        for command in linux_players:
+            if shutil.which(command[0]):
+                subprocess.run(command, check=True)
+                return
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PDFAudiobookError(
+            "The preview was created, but audio playback failed. "
+            "Please check that your system can play MP3 files."
+        ) from exc
+
+    raise PDFAudiobookError(
+        "The preview was created, but no supported audio player was found."
+    )
+
+
 class PDFAudiobookApp(tk.Tk):
     """Main Tkinter window for the PDF audiobook converter."""
 
@@ -517,21 +606,16 @@ class PDFAudiobookApp(tk.Tk):
             row=1, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
         )
 
-        ttk.Label(settings_frame, text="Speech rate").grid(
-            row=2, column=0, sticky="w", pady=(12, 0)
-        )
-        ttk.Scale(
+        self.preview_button = ttk.Button(
             settings_frame,
-            from_=-50,
-            to=50,
-            orient=tk.HORIZONTAL,
-            variable=self.rate,
-        ).grid(row=2, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
-        ttk.Label(settings_frame, textvariable=self.rate).grid(
-            row=2, column=2, sticky="e", padx=(10, 0), pady=(12, 0)
+            text="Preview Voice",
+            command=self._start_voice_preview,
+        )
+        self.preview_button.grid(
+            row=2, column=1, sticky="w", padx=(12, 0), pady=(12, 0)
         )
 
-        ttk.Label(settings_frame, text="Volume").grid(
+        ttk.Label(settings_frame, text="Speech rate").grid(
             row=3, column=0, sticky="w", pady=(12, 0)
         )
         ttk.Scale(
@@ -539,17 +623,31 @@ class PDFAudiobookApp(tk.Tk):
             from_=-50,
             to=50,
             orient=tk.HORIZONTAL,
-            variable=self.volume,
+            variable=self.rate,
         ).grid(row=3, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
-        ttk.Label(settings_frame, textvariable=self.volume).grid(
+        ttk.Label(settings_frame, textvariable=self.rate).grid(
             row=3, column=2, sticky="e", padx=(10, 0), pady=(12, 0)
+        )
+
+        ttk.Label(settings_frame, text="Volume").grid(
+            row=4, column=0, sticky="w", pady=(12, 0)
+        )
+        ttk.Scale(
+            settings_frame,
+            from_=-50,
+            to=50,
+            orient=tk.HORIZONTAL,
+            variable=self.volume,
+        ).grid(row=4, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
+        ttk.Label(settings_frame, textvariable=self.volume).grid(
+            row=4, column=2, sticky="e", padx=(10, 0), pady=(12, 0)
         )
 
         ttk.Checkbutton(
             settings_frame,
             text="Shadowing Mode",
             variable=self.shadowing_mode,
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
         progress_frame = ttk.Frame(container)
         progress_frame.grid(row=4, column=0, sticky="ew", pady=(2, 16))
@@ -664,6 +762,27 @@ class PDFAudiobookApp(tk.Tk):
         )
         worker.start()
 
+    def _start_voice_preview(self) -> None:
+        """Start the background voice preview worker."""
+
+        if self._is_processing:
+            return
+
+        print("Preview Voice started")
+        settings = self._get_voice_preview_settings()
+        self._is_processing = True
+        self.convert_button.configure(state=tk.DISABLED)
+        self.preview_button.configure(state=tk.DISABLED)
+        self.progress_value.set(0)
+        self.status_text.set("Generating voice preview...")
+
+        worker = threading.Thread(
+            target=self._run_voice_preview,
+            args=(settings,),
+            daemon=True,
+        )
+        worker.start()
+
     def _get_settings(self) -> ConversionSettings:
         """Collect validated settings from the UI controls."""
 
@@ -697,6 +816,24 @@ class PDFAudiobookApp(tk.Tk):
             rate=int(self.rate.get()),
             volume=int(self.volume.get()),
             shadowing_mode=bool(self.shadowing_mode.get()),
+        )
+
+    def _get_voice_preview_settings(self) -> VoicePreviewSettings:
+        """Collect voice preview settings without requiring a PDF."""
+
+        return VoicePreviewSettings(
+            english_voice_id=self._selected_voice_id(
+                self.selected_english_voice.get(),
+                self._english_voice_options,
+                DEFAULT_ENGLISH_VOICE,
+            ),
+            spanish_voice_id=self._selected_voice_id(
+                self.selected_spanish_voice.get(),
+                self._spanish_voice_options,
+                DEFAULT_SPANISH_VOICE,
+            ),
+            rate=int(self.rate.get()),
+            volume=int(self.volume.get()),
         )
 
     @staticmethod
@@ -778,6 +915,50 @@ class PDFAudiobookApp(tk.Tk):
             self._messages.put(ProgressMessage("error", f"Unexpected error: {exc!r}"))
             raise
 
+    def _run_voice_preview(self, settings: VoicePreviewSettings) -> None:
+        """Worker-thread voice preview body."""
+
+        preview_path: Path | None = None
+        try:
+            fd, path = tempfile.mkstemp(prefix="echolearn-preview-", suffix=".mp3")
+            os.close(fd)
+            preview_path = Path(path)
+
+            print("Generating preview audio")
+            self._messages.put(ProgressMessage("status", "Generating preview audio..."))
+            self._messages.put(ProgressMessage("progress", 30))
+
+            service = TextToSpeechService()
+            service.save_preview_to_mp3(
+                preview_path,
+                english_voice_id=settings.english_voice_id,
+                spanish_voice_id=settings.spanish_voice_id,
+                rate=settings.rate,
+                volume=settings.volume,
+            )
+
+            print("Playing preview audio")
+            self._messages.put(ProgressMessage("status", "Playing preview audio..."))
+            self._messages.put(ProgressMessage("progress", 75))
+            play_audio_file(preview_path)
+
+            print("Preview completed")
+            self._messages.put(ProgressMessage("progress", 100))
+            self._messages.put(ProgressMessage("preview_success"))
+        except PDFAudiobookError as exc:
+            self._messages.put(ProgressMessage("preview_error", str(exc)))
+        except Exception as exc:
+            traceback.print_exc()
+            self._messages.put(
+                ProgressMessage("preview_error", f"Unexpected preview error: {exc!r}")
+            )
+        finally:
+            if preview_path is not None:
+                try:
+                    preview_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
     def _process_worker_messages(self) -> None:
         """Apply worker-thread messages safely on the Tkinter UI thread."""
 
@@ -804,6 +985,13 @@ class PDFAudiobookApp(tk.Tk):
                     self._finish_processing()
                     self.status_text.set("Conversion failed.")
                     messagebox.showerror("Conversion failed", str(message.payload))
+                elif message.kind == "preview_success":
+                    self._finish_processing()
+                    self.status_text.set("Voice preview completed.")
+                elif message.kind == "preview_error":
+                    self._finish_processing()
+                    self.status_text.set("Voice preview failed.")
+                    messagebox.showerror("Voice preview failed", str(message.payload))
         except queue.Empty:
             pass
         finally:
@@ -814,6 +1002,7 @@ class PDFAudiobookApp(tk.Tk):
 
         self._is_processing = False
         self.convert_button.configure(state=tk.NORMAL)
+        self.preview_button.configure(state=tk.NORMAL)
 
 
 def main() -> None:

@@ -13,6 +13,7 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Text-to-speech MP3 generation with `edge-tts`
 - Real timed pause generation with FFmpeg
 - English and Spanish voice selectors
+- Voice Preview for selected voices and speech settings
 - Speech rate and volume controls
 - Shadowing Mode for automatic English phrase repetition
 - MP3 output file selection
@@ -149,6 +150,11 @@ you a listen-and-repeat pattern without adding any new tags to your PDF.
 Shadowing only applies to English text. Spanish text and explicit pause tags keep
 their normal behavior.
 
+## Voice Preview
+
+The Preview Voice button allows users to listen to a short sample using the
+currently selected English and Spanish voices before generating a full audiobook.
+
 ## Voice Options
 
 English voices:
@@ -156,7 +162,6 @@ English voices:
 - `en-US-JennyNeural`
 - `en-US-GuyNeural`
 - `en-US-AriaNeural`
-- `en-US-DavisNeural`
 
 Spanish voices:
 
