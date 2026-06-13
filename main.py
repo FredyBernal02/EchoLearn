@@ -75,6 +75,7 @@ class ConversionSettings:
     rate: int
     volume: int
     shadowing_mode: bool
+    idioms_mode: bool
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,34 @@ def add_shadowing_repeats(segments: list[ScriptSegment]) -> list[ScriptSegment]:
             shadowed_segments.append(segment)
 
     return shadowed_segments
+
+
+def add_idiom_repeats(segments: list[ScriptSegment]) -> list[ScriptSegment]:
+    """Repeat English once after each consecutive English/Spanish text pair."""
+
+    idiom_segments: list[ScriptSegment] = []
+    index = 0
+    while index < len(segments):
+        current_segment = segments[index]
+        next_segment = segments[index + 1] if index + 1 < len(segments) else None
+
+        is_idiom_pair = (
+            current_segment.kind == "text"
+            and current_segment.language == "EN"
+            and next_segment is not None
+            and next_segment.kind == "text"
+            and next_segment.language == "ES"
+        )
+        if is_idiom_pair:
+            print(f"Adding idiom repeat for segment {index + 1}")
+            idiom_segments.extend([current_segment, next_segment, current_segment])
+            index += 2
+            continue
+
+        idiom_segments.append(current_segment)
+        index += 1
+
+    return idiom_segments
 
 
 def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> None:
@@ -509,8 +538,8 @@ class PDFAudiobookApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("720x560")
-        self.minsize(660, 520)
+        self.geometry("720x590")
+        self.minsize(660, 560)
 
         self.pdf_path = tk.StringVar()
         self.output_path = tk.StringVar()
@@ -521,6 +550,7 @@ class PDFAudiobookApp(tk.Tk):
         self.rate = tk.IntVar(value=DEFAULT_RATE)
         self.volume = tk.IntVar(value=DEFAULT_VOLUME)
         self.shadowing_mode = tk.BooleanVar(value=False)
+        self.idioms_mode = tk.BooleanVar(value=False)
         self.progress_value = tk.DoubleVar(value=0)
 
         self._messages: queue.Queue[ProgressMessage] = queue.Queue()
@@ -648,6 +678,12 @@ class PDFAudiobookApp(tk.Tk):
             text="Shadowing Mode",
             variable=self.shadowing_mode,
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+
+        ttk.Checkbutton(
+            settings_frame,
+            text="Idioms Mode",
+            variable=self.idioms_mode,
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
         progress_frame = ttk.Frame(container)
         progress_frame.grid(row=4, column=0, sticky="ew", pady=(2, 16))
@@ -816,6 +852,7 @@ class PDFAudiobookApp(tk.Tk):
             rate=int(self.rate.get()),
             volume=int(self.volume.get()),
             shadowing_mode=bool(self.shadowing_mode.get()),
+            idioms_mode=bool(self.idioms_mode.get()),
         )
 
     def _get_voice_preview_settings(self) -> VoicePreviewSettings:
@@ -867,6 +904,9 @@ class PDFAudiobookApp(tk.Tk):
                 write_debug_text(text, DEBUG_NORMALIZED_TEXT_FILE)
 
             segments, warnings = parse_audio_script(text)
+            print(f"Idioms Mode: {'ON' if settings.idioms_mode else 'OFF'}")
+            if settings.idioms_mode:
+                segments = add_idiom_repeats(segments)
             print(f"Shadowing Mode: {'ON' if settings.shadowing_mode else 'OFF'}")
             if settings.shadowing_mode:
                 segments = add_shadowing_repeats(segments)

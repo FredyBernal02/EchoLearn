@@ -16,6 +16,7 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Voice Preview for selected voices and speech settings
 - Speech rate and volume controls
 - Shadowing Mode for automatic English phrase repetition
+- Idioms Mode for English-Spanish-English learning patterns
 - MP3 output file selection
 - Page count display and progress bar
 - Friendly error messages for invalid, empty, scanned, or image-only PDFs
@@ -149,6 +150,36 @@ you a listen-and-repeat pattern without adding any new tags to your PDF.
 
 Shadowing only applies to English text. Spanish text and explicit pause tags keep
 their normal behavior.
+
+## Idioms Mode
+
+Enable **Idioms Mode** to automatically repeat each English phrase after its
+Spanish translation. For every consecutive `[EN]` and `[ES]` pair, EchoLearn
+plays the audio in this order:
+
+```text
+English
+Spanish
+English
+```
+
+Example:
+
+```text
+[EN] To take care.
+[ES] Cuidar.
+```
+
+With Idioms Mode enabled, EchoLearn reads:
+
+```text
+To take care.
+Cuidar.
+To take care.
+```
+
+English-only and Spanish-only segments keep their normal behavior. Idioms Mode
+and Shadowing Mode are independent, so either one or both can be enabled.
 
 ## Voice Preview
 
