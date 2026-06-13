@@ -28,13 +28,21 @@ import edge_tts
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except ImportError:
+    DND_FILES = None
+    TkinterDnD = None
 
-APP_TITLE = "PDF Audiobook Converter"
+
+APP_TITLE = "EchoLearn"
 DEFAULT_RATE = 0
 DEFAULT_VOLUME = 0
 DEFAULT_ENGLISH_VOICE = "en-US-JennyNeural"
 DEFAULT_SPANISH_VOICE = "es-CO-SalomeNeural"
 DEFAULT_SHADOWING_PAUSE_SECONDS = 3
+DEFAULT_LEARNING_PAUSES_ENABLED = True
+DEFAULT_LEARNING_PAUSE_SECONDS = 2
 SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
@@ -76,6 +84,8 @@ class ConversionSettings:
     volume: int
     shadowing_mode: bool
     idioms_mode: bool
+    learning_pauses: bool
+    learning_pause_seconds: int
 
 
 @dataclass(frozen=True)
@@ -112,6 +122,9 @@ class ProgressMessage:
 
     kind: str
     payload: Any = None
+
+
+DND_TK_BASE = TkinterDnD.Tk if TkinterDnD is not None else tk.Tk
 
 
 def normalize_text(text: str) -> str:
@@ -232,10 +245,16 @@ def add_shadowing_repeats(segments: list[ScriptSegment]) -> list[ScriptSegment]:
     return shadowed_segments
 
 
-def add_idiom_repeats(segments: list[ScriptSegment]) -> list[ScriptSegment]:
+def add_idiom_repeats(
+    segments: list[ScriptSegment],
+    *,
+    learning_pauses: bool,
+    learning_pause_seconds: int,
+) -> list[ScriptSegment]:
     """Repeat English once after each consecutive English/Spanish text pair."""
 
     idiom_segments: list[ScriptSegment] = []
+    learning_pause = ScriptSegment(kind="pause", seconds=learning_pause_seconds)
     index = 0
     while index < len(segments):
         current_segment = segments[index]
@@ -250,7 +269,19 @@ def add_idiom_repeats(segments: list[ScriptSegment]) -> list[ScriptSegment]:
         )
         if is_idiom_pair:
             print(f"Adding idiom repeat for segment {index + 1}")
-            idiom_segments.extend([current_segment, next_segment, current_segment])
+            if learning_pauses:
+                print(f"Adding learning pauses: {learning_pause_seconds} seconds")
+                idiom_segments.extend(
+                    [
+                        current_segment,
+                        learning_pause,
+                        next_segment,
+                        learning_pause,
+                        current_segment,
+                    ]
+                )
+            else:
+                idiom_segments.extend([current_segment, next_segment, current_segment])
             index += 2
             continue
 
@@ -532,14 +563,136 @@ def play_audio_file(audio_path: Path) -> None:
     )
 
 
-class PDFAudiobookApp(tk.Tk):
+class ToggleSwitch(tk.Frame):
+    """Canvas-based toggle switch bound to a BooleanVar."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        *,
+        text: str,
+        variable: tk.BooleanVar,
+        background: str,
+    ) -> None:
+        super().__init__(parent, bg=background)
+        self.variable = variable
+        self.background = background
+        self.canvas = tk.Canvas(
+            self,
+            width=52,
+            height=28,
+            bg=background,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.canvas.grid(row=0, column=0, sticky="w")
+        self.label = tk.Label(
+            self,
+            text=text,
+            bg=background,
+            fg="#eef2f8",
+            font=("TkDefaultFont", 11),
+        )
+        self.label.grid(row=0, column=1, sticky="w", padx=(12, 0))
+
+        self.canvas.bind("<Button-1>", self._toggle)
+        self.label.bind("<Button-1>", self._toggle)
+        self.variable.trace_add("write", lambda *_args: self._draw())
+        self._draw()
+
+    def _toggle(self, _event: tk.Event) -> None:
+        self.variable.set(not self.variable.get())
+
+    def _draw(self) -> None:
+        self.canvas.delete("all")
+        enabled = self.variable.get()
+        fill = "#1db954" if enabled else "#303644"
+        knob_x = 28 if enabled else 4
+        self.canvas.create_oval(2, 2, 50, 26, fill=fill, outline=fill)
+        self.canvas.create_oval(knob_x, 4, knob_x + 20, 24, fill="#ffffff", outline="")
+
+
+class AnimatedProgressBar(tk.Canvas):
+    """Dark themed progress bar with a moving highlight while active."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        *,
+        variable: tk.DoubleVar,
+        background: str = "#242833",
+        accent: str = "#1db954",
+    ) -> None:
+        super().__init__(
+            parent,
+            height=16,
+            bg="#191c24",
+            highlightthickness=0,
+            bd=0,
+        )
+        self.variable = variable
+        self.track_color = background
+        self.accent_color = accent
+        self.highlight_color = "#64f58f"
+        self._offset = 0
+        self._running = False
+        self.variable.trace_add("write", lambda *_args: self._draw())
+        self.bind("<Configure>", lambda _event: self._draw())
+        self._draw()
+
+    def start(self) -> None:
+        self._running = True
+        self._animate()
+
+    def stop(self) -> None:
+        self._running = False
+        self._draw()
+
+    def _animate(self) -> None:
+        if not self._running:
+            return
+        self._offset = (self._offset + 7) % 40
+        self._draw()
+        self.after(90, self._animate)
+
+    def _draw(self) -> None:
+        self.delete("all")
+        width = max(self.winfo_width(), 1)
+        height = max(self.winfo_height(), 1)
+        percent = max(0.0, min(float(self.variable.get()), 100.0))
+        fill_width = width * (percent / 100)
+
+        self.create_rectangle(0, 0, width, height, fill=self.track_color, outline="")
+        if fill_width <= 0:
+            return
+
+        self.create_rectangle(0, 0, fill_width, height, fill=self.accent_color, outline="")
+        if self._running:
+            stripe_start = self._offset - 40
+            while stripe_start < fill_width:
+                self.create_polygon(
+                    stripe_start,
+                    height,
+                    stripe_start + 16,
+                    height,
+                    stripe_start + 32,
+                    0,
+                    stripe_start + 16,
+                    0,
+                    fill=self.highlight_color,
+                    outline="",
+                )
+                stripe_start += 40
+
+
+class PDFAudiobookApp(DND_TK_BASE):
     """Main Tkinter window for the PDF audiobook converter."""
 
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("720x590")
-        self.minsize(660, 560)
+        self.geometry("1040x760")
+        self.minsize(900, 700)
 
         self.pdf_path = tk.StringVar()
         self.output_path = tk.StringVar()
@@ -551,12 +704,17 @@ class PDFAudiobookApp(tk.Tk):
         self.volume = tk.IntVar(value=DEFAULT_VOLUME)
         self.shadowing_mode = tk.BooleanVar(value=False)
         self.idioms_mode = tk.BooleanVar(value=False)
+        self.learning_pauses = tk.BooleanVar(value=DEFAULT_LEARNING_PAUSES_ENABLED)
+        self.learning_pause_seconds = tk.IntVar(value=DEFAULT_LEARNING_PAUSE_SECONDS)
+        self.open_audio_when_finished = tk.BooleanVar(value=False)
         self.progress_value = tk.DoubleVar(value=0)
+        self.progress_percent = tk.StringVar(value="0%")
 
         self._messages: queue.Queue[ProgressMessage] = queue.Queue()
         self._english_voice_options: list[VoiceOption] = []
         self._spanish_voice_options: list[VoiceOption] = []
         self._is_processing = False
+        self._last_output_path: Path | None = None
 
         self._configure_style()
         self._build_ui()
@@ -564,152 +722,430 @@ class PDFAudiobookApp(tk.Tk):
         self.after(100, self._process_worker_messages)
 
     def _configure_style(self) -> None:
-        """Apply a clean cross-platform ttk theme."""
+        """Apply a polished dark desktop theme."""
 
         style = ttk.Style(self)
         if "clam" in style.theme_names():
             style.theme_use("clam")
-        style.configure("TButton", padding=(12, 8))
-        style.configure("TLabel", padding=(0, 3))
-        style.configure("Title.TLabel", font=("TkDefaultFont", 18, "bold"))
-        style.configure("Status.TLabel", foreground="#2f5d62")
 
+        self.configure(bg="#0f1117")
+
+        style.configure("App.TFrame", background="#0f1117")
+        style.configure("Card.TFrame", background="#191c24")
+        style.configure(
+            "TLabel",
+            background="#191c24",
+            foreground="#eef2f8",
+            padding=(0, 3),
+            font=("TkDefaultFont", 11),
+        )
+        style.configure(
+            "Muted.TLabel",
+            background="#191c24",
+            foreground="#9aa4b2",
+            font=("TkDefaultFont", 10),
+        )
+        style.configure(
+            "Title.TLabel",
+            background="#0f1117",
+            foreground="#ffffff",
+            font=("TkDefaultFont", 28, "bold"),
+            padding=(0, 0),
+        )
+        style.configure(
+            "Subtitle.TLabel",
+            background="#0f1117",
+            foreground="#9aa4b2",
+            font=("TkDefaultFont", 13),
+            padding=(0, 0),
+        )
+        style.configure(
+            "Section.TLabel",
+            background="#191c24",
+            foreground="#ffffff",
+            font=("TkDefaultFont", 17, "bold"),
+            padding=(0, 0),
+        )
+        style.configure(
+            "Status.TLabel",
+            background="#0f1117",
+            foreground="#86efac",
+            font=("TkDefaultFont", 10),
+        )
+        style.configure(
+            "TButton",
+            background="#2a2f3a",
+            foreground="#ffffff",
+            borderwidth=0,
+            focusthickness=0,
+            padding=(16, 10),
+            font=("TkDefaultFont", 11, "bold"),
+        )
+        style.map(
+            "TButton",
+            background=[("disabled", "#242833"), ("active", "#3a4150")],
+            foreground=[("disabled", "#6f7785"), ("active", "#ffffff")],
+        )
+        style.configure(
+            "Primary.TButton",
+            background="#1db954",
+            foreground="#07110a",
+            padding=(22, 13),
+            font=("TkDefaultFont", 12, "bold"),
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("disabled", "#244431"), ("active", "#28d263")],
+            foreground=[("disabled", "#7b9083"), ("active", "#07110a")],
+        )
+        style.configure(
+            "TEntry",
+            fieldbackground="#10131a",
+            foreground="#eef2f8",
+            insertcolor="#eef2f8",
+            bordercolor="#303644",
+            lightcolor="#303644",
+            darkcolor="#303644",
+            padding=(10, 8),
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground="#10131a",
+            background="#10131a",
+            foreground="#eef2f8",
+            bordercolor="#303644",
+            arrowcolor="#eef2f8",
+            padding=(8, 7),
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", "#10131a")],
+            foreground=[("readonly", "#eef2f8")],
+            selectbackground=[("readonly", "#10131a")],
+            selectforeground=[("readonly", "#eef2f8")],
+        )
+        style.configure(
+            "Horizontal.TScale",
+            background="#191c24",
+            troughcolor="#303644",
+            sliderthickness=18,
+        )
+        style.configure(
+            "Horizontal.TProgressbar",
+            background="#1db954",
+            troughcolor="#242833",
+            bordercolor="#242833",
+            lightcolor="#1db954",
+            darkcolor="#1db954",
+            thickness=12,
+        )
     def _build_ui(self) -> None:
         """Create all visual controls."""
 
-        container = ttk.Frame(self, padding=24)
+        container = ttk.Frame(self, padding=(28, 24), style="App.TFrame")
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
 
-        ttk.Label(container, text=APP_TITLE, style="Title.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 18)
+        header = ttk.Frame(container, style="App.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 24))
+        header.columnconfigure(0, weight=1)
+
+        ttk.Label(header, text="EchoLearn", style="Title.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(header, text="Learn by Listening", style="Subtitle.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(5, 0)
         )
 
-        file_frame = ttk.LabelFrame(container, text="PDF file", padding=14)
-        file_frame.grid(row=1, column=0, sticky="ew", pady=(0, 14))
-        file_frame.columnconfigure(0, weight=1)
+        content = ttk.Frame(container, style="App.TFrame")
+        content.grid(row=1, column=0, sticky="nsew")
+        content.columnconfigure(0, weight=1)
+        content.columnconfigure(1, weight=1)
+        content.rowconfigure(1, weight=1)
 
-        ttk.Entry(file_frame, textvariable=self.pdf_path).grid(
-            row=0, column=0, sticky="ew", padx=(0, 8)
+        pdf_card = self._create_card(content)
+        pdf_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 16))
+        pdf_card.columnconfigure(1, weight=1)
+        self._add_card_header(pdf_card, "PDF", "Source script", "pdf")
+
+        drop_text = "Drop a PDF here or choose one from your computer"
+        if DND_FILES is None:
+            drop_text = "Choose a PDF from your computer"
+        ttk.Label(pdf_card, text=drop_text, style="Muted.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(16, 4)
         )
-        ttk.Button(file_frame, text="Browse", command=self._choose_pdf).grid(
-            row=0, column=1
+        ttk.Entry(pdf_card, textvariable=self.pdf_path).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 12)
         )
-        ttk.Label(file_frame, textvariable=self.page_count).grid(
-            row=1, column=0, sticky="w", pady=(8, 0)
+        ttk.Button(pdf_card, text="Browse PDF", command=self._choose_pdf).grid(
+            row=3, column=0, sticky="w"
+        )
+        ttk.Label(pdf_card, textvariable=self.page_count, style="Muted.TLabel").grid(
+            row=3, column=1, sticky="e"
         )
 
-        output_frame = ttk.LabelFrame(container, text="MP3 output", padding=14)
-        output_frame.grid(row=2, column=0, sticky="ew", pady=(0, 14))
-        output_frame.columnconfigure(0, weight=1)
+        voices_card = self._create_card(content)
+        voices_card.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=(0, 16))
+        voices_card.columnconfigure(1, weight=1)
+        self._add_card_header(voices_card, "Voices", "Bilingual narration", "voices")
 
-        ttk.Entry(output_frame, textvariable=self.output_path).grid(
-            row=0, column=0, sticky="ew", padx=(0, 8)
+        ttk.Label(voices_card, text="English voice").grid(
+            row=1, column=0, sticky="w", pady=(16, 0)
         )
-        ttk.Button(output_frame, text="Save As", command=self._choose_output).grid(
-            row=0, column=1
-        )
-
-        settings_frame = ttk.LabelFrame(container, text="Speech settings", padding=14)
-        settings_frame.grid(row=3, column=0, sticky="ew", pady=(0, 14))
-        settings_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(settings_frame, text="English voice").grid(row=0, column=0, sticky="w")
         self.english_voice_menu = ttk.Combobox(
-            settings_frame,
+            voices_card,
             textvariable=self.selected_english_voice,
             state="readonly",
             values=[],
         )
-        self.english_voice_menu.grid(row=0, column=1, sticky="ew", padx=(12, 0))
+        self.english_voice_menu.grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=(16, 0))
 
-        ttk.Label(settings_frame, text="Spanish voice").grid(
-            row=1, column=0, sticky="w", pady=(12, 0)
+        ttk.Label(voices_card, text="Spanish voice").grid(
+            row=2, column=0, sticky="w", pady=(14, 0)
         )
         self.spanish_voice_menu = ttk.Combobox(
-            settings_frame,
+            voices_card,
             textvariable=self.selected_spanish_voice,
             state="readonly",
             values=[],
         )
         self.spanish_voice_menu.grid(
-            row=1, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
+            row=2, column=1, sticky="ew", padx=(14, 0), pady=(14, 0)
         )
 
         self.preview_button = ttk.Button(
-            settings_frame,
+            voices_card,
             text="Preview Voice",
             command=self._start_voice_preview,
         )
         self.preview_button.grid(
-            row=2, column=1, sticky="w", padx=(12, 0), pady=(12, 0)
+            row=3, column=1, sticky="w", padx=(14, 0), pady=(18, 0)
         )
 
-        ttk.Label(settings_frame, text="Speech rate").grid(
-            row=3, column=0, sticky="w", pady=(12, 0)
+        learning_card = self._create_card(content)
+        learning_card.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        learning_card.columnconfigure(1, weight=1)
+        self._add_card_header(
+            learning_card,
+            "Learning Modes",
+            "Practice patterns",
+            "learning",
+        )
+
+        ttk.Label(learning_card, text="Speech rate").grid(
+            row=1, column=0, sticky="w", pady=(18, 0)
         )
         ttk.Scale(
-            settings_frame,
+            learning_card,
             from_=-50,
             to=50,
             orient=tk.HORIZONTAL,
             variable=self.rate,
-        ).grid(row=3, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
-        ttk.Label(settings_frame, textvariable=self.rate).grid(
-            row=3, column=2, sticky="e", padx=(10, 0), pady=(12, 0)
+        ).grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=(18, 0))
+        ttk.Label(learning_card, textvariable=self.rate, style="Muted.TLabel").grid(
+            row=1, column=2, sticky="e", padx=(10, 0), pady=(18, 0)
         )
 
-        ttk.Label(settings_frame, text="Volume").grid(
-            row=4, column=0, sticky="w", pady=(12, 0)
+        ttk.Label(learning_card, text="Volume").grid(
+            row=2, column=0, sticky="w", pady=(14, 0)
         )
         ttk.Scale(
-            settings_frame,
+            learning_card,
             from_=-50,
             to=50,
             orient=tk.HORIZONTAL,
             variable=self.volume,
-        ).grid(row=4, column=1, sticky="ew", padx=(12, 0), pady=(12, 0))
-        ttk.Label(settings_frame, textvariable=self.volume).grid(
-            row=4, column=2, sticky="e", padx=(10, 0), pady=(12, 0)
+        ).grid(row=2, column=1, sticky="ew", padx=(14, 0), pady=(14, 0))
+        ttk.Label(learning_card, textvariable=self.volume, style="Muted.TLabel").grid(
+            row=2, column=2, sticky="e", padx=(10, 0), pady=(14, 0)
         )
 
-        ttk.Checkbutton(
-            settings_frame,
+        ToggleSwitch(
+            learning_card,
             text="Shadowing Mode",
             variable=self.shadowing_mode,
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+            background="#191c24",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(20, 0))
 
-        ttk.Checkbutton(
-            settings_frame,
+        ToggleSwitch(
+            learning_card,
             text="Idioms Mode",
             variable=self.idioms_mode,
-        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
+            background="#191c24",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
-        progress_frame = ttk.Frame(container)
-        progress_frame.grid(row=4, column=0, sticky="ew", pady=(2, 16))
-        progress_frame.columnconfigure(0, weight=1)
+        ToggleSwitch(
+            learning_card,
+            text="Learning Pauses",
+            variable=self.learning_pauses,
+            background="#191c24",
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
-        self.progress_bar = ttk.Progressbar(
-            progress_frame,
+        ttk.Label(learning_card, text="Learning pause seconds").grid(
+            row=6, column=0, sticky="w", pady=(12, 0)
+        )
+        self.learning_pause_menu = ttk.Combobox(
+            learning_card,
+            textvariable=self.learning_pause_seconds,
+            state="readonly",
+            values=[1, 2, 3, 5],
+            width=6,
+        )
+        self.learning_pause_menu.grid(
+            row=6, column=1, sticky="w", padx=(14, 0), pady=(12, 0)
+        )
+
+        conversion_card = self._create_card(content)
+        conversion_card.grid(row=1, column=1, sticky="nsew", padx=(10, 0))
+        conversion_card.columnconfigure(0, weight=1)
+        conversion_card.columnconfigure(1, weight=0)
+        self._add_card_header(
+            conversion_card,
+            "Conversion",
+            "Export your audiobook",
+            "conversion",
+        )
+
+        ttk.Entry(conversion_card, textvariable=self.output_path).grid(
+            row=1, column=0, sticky="ew", pady=(18, 12), padx=(0, 10)
+        )
+        ttk.Button(
+            conversion_card,
+            text="Save As",
+            command=self._choose_output,
+        ).grid(row=1, column=1, sticky="e", pady=(18, 12))
+
+        self.progress_bar = AnimatedProgressBar(
+            conversion_card,
             variable=self.progress_value,
-            maximum=100,
-            mode="determinate",
         )
-        self.progress_bar.grid(row=0, column=0, sticky="ew")
+        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 10))
 
-        ttk.Label(container, textvariable=self.status_text, style="Status.TLabel").grid(
-            row=5, column=0, sticky="w"
+        progress_meta = ttk.Frame(conversion_card, style="Card.TFrame")
+        progress_meta.grid(row=3, column=0, columnspan=2, sticky="ew")
+        progress_meta.columnconfigure(0, weight=1)
+        ttk.Label(
+            progress_meta,
+            text="Current task",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            progress_meta,
+            textvariable=self.progress_percent,
+            style="Section.TLabel",
+        ).grid(row=0, column=1, sticky="e")
+
+        ttk.Label(
+            conversion_card,
+            textvariable=self.status_text,
+            style="Muted.TLabel",
+            wraplength=300,
+        ).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(8, 18)
         )
 
-        action_frame = ttk.Frame(container)
-        action_frame.grid(row=6, column=0, sticky="e", pady=(20, 0))
+        ToggleSwitch(
+            conversion_card,
+            text="Open audio automatically when finished",
+            variable=self.open_audio_when_finished,
+            background="#191c24",
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 16))
+
+        action_row = ttk.Frame(conversion_card, style="Card.TFrame")
+        action_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        action_row.columnconfigure(0, weight=1)
+        action_row.columnconfigure(1, weight=1)
+
+        self.open_audio_button = ttk.Button(
+            action_row,
+            text="Open Audio",
+            command=self._open_last_audio,
+        )
+        self.open_audio_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.open_audio_button.configure(state=tk.DISABLED)
+
+        self.open_folder_button = ttk.Button(
+            action_row,
+            text="Open Folder",
+            command=self._open_last_output_folder,
+        )
+        self.open_folder_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self.open_folder_button.configure(state=tk.DISABLED)
 
         self.convert_button = ttk.Button(
-            action_frame,
+            conversion_card,
             text="Convert to MP3",
+            style="Primary.TButton",
             command=self._start_conversion,
         )
-        self.convert_button.pack(side=tk.RIGHT)
+        self.convert_button.grid(row=7, column=0, columnspan=2, sticky="ew")
+
+        self._configure_drag_and_drop()
+
+    def _create_card(self, parent: tk.Widget) -> ttk.Frame:
+        """Create a dark card container."""
+
+        card = ttk.Frame(parent, padding=22, style="Card.TFrame")
+        return card
+
+    def _add_card_header(
+        self,
+        parent: ttk.Frame,
+        title: str,
+        subtitle: str,
+        icon_name: str,
+    ) -> None:
+        """Add a section title, subtitle, and simple drawn icon."""
+
+        icon = tk.Canvas(
+            parent,
+            width=48,
+            height=48,
+            bg="#191c24",
+            highlightthickness=0,
+            bd=0,
+        )
+        icon.grid(row=0, column=0, sticky="w", padx=(0, 14))
+        self._draw_icon(icon, icon_name)
+
+        title_frame = ttk.Frame(parent, style="Card.TFrame")
+        title_frame.grid(row=0, column=1, columnspan=2, sticky="ew")
+        ttk.Label(title_frame, text=title, style="Section.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(title_frame, text=subtitle, style="Muted.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(2, 0)
+        )
+
+    def _draw_icon(self, canvas: tk.Canvas, icon_name: str) -> None:
+        """Draw small section icons without external image dependencies."""
+
+        accent = "#1db954"
+        muted = "#9aa4b2"
+        canvas.create_oval(2, 2, 46, 46, fill="#10131a", outline="#303644", width=1)
+
+        if icon_name == "pdf":
+            canvas.create_rectangle(16, 11, 32, 36, outline=accent, width=2)
+            canvas.create_line(27, 11, 32, 16, 32, 36, fill=accent, width=2)
+            canvas.create_line(19, 22, 29, 22, fill=muted, width=2)
+            canvas.create_line(19, 27, 29, 27, fill=muted, width=2)
+        elif icon_name == "voices":
+            canvas.create_oval(13, 14, 26, 27, outline=accent, width=2)
+            canvas.create_arc(18, 18, 42, 42, start=315, extent=90, outline=muted, width=2)
+            canvas.create_arc(13, 13, 45, 45, start=315, extent=90, outline=muted, width=2)
+            canvas.create_line(19, 28, 19, 36, fill=accent, width=2)
+            canvas.create_line(14, 36, 24, 36, fill=accent, width=2)
+        elif icon_name == "learning":
+            canvas.create_oval(12, 12, 22, 22, fill=accent, outline=accent)
+            canvas.create_oval(28, 12, 38, 22, fill=muted, outline=muted)
+            canvas.create_oval(20, 28, 30, 38, fill=accent, outline=accent)
+            canvas.create_line(22, 18, 28, 18, fill=muted, width=2)
+            canvas.create_line(18, 22, 24, 28, fill=muted, width=2)
+            canvas.create_line(32, 22, 28, 28, fill=muted, width=2)
+        else:
+            canvas.create_line(14, 24, 32, 24, fill=accent, width=3, arrow=tk.LAST)
+            canvas.create_arc(13, 13, 36, 36, start=220, extent=250, outline=muted, width=2)
 
     def _load_voices(self) -> None:
         """Load voice lists and populate both language selectors."""
@@ -730,6 +1166,32 @@ class PDFAudiobookApp(tk.Tk):
         self.selected_english_voice.set(DEFAULT_ENGLISH_VOICE)
         self.selected_spanish_voice.set(DEFAULT_SPANISH_VOICE)
 
+    def _configure_drag_and_drop(self) -> None:
+        """Enable PDF drag and drop when tkinterdnd2 is available."""
+
+        if DND_FILES is None:
+            return
+
+        try:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self._handle_pdf_drop)
+        except tk.TclError:
+            pass
+
+    def _handle_pdf_drop(self, event: tk.Event) -> None:
+        """Load the first dropped PDF file."""
+
+        dropped_paths = self.tk.splitlist(str(event.data))
+        if not dropped_paths:
+            return
+
+        pdf_path = Path(dropped_paths[0])
+        if pdf_path.suffix.lower() != ".pdf":
+            messagebox.showerror("Invalid file", "Please drop a PDF file.")
+            return
+
+        self._load_pdf(pdf_path)
+
     def _choose_pdf(self) -> None:
         """Ask the user to select a PDF file and show the page count."""
 
@@ -740,10 +1202,19 @@ class PDFAudiobookApp(tk.Tk):
         if not path:
             return
 
-        self.pdf_path.set(path)
+        self._load_pdf(Path(path))
+
+    def _load_pdf(self, pdf_path: Path) -> None:
+        """Load a PDF into the UI from Browse or drag and drop."""
+
+        self.pdf_path.set(str(pdf_path))
         if not self.output_path.get():
-            self.output_path.set(str(Path(path).with_suffix(".mp3")))
-        self._update_page_count(Path(path))
+            self.output_path.set(str(pdf_path.with_suffix(".mp3")))
+
+        try:
+            self._update_page_count(pdf_path)
+        except Exception as exc:
+            messagebox.showerror("PDF could not be loaded", str(exc))
 
     def _choose_output(self) -> None:
         """Ask the user where the MP3 should be saved."""
@@ -760,6 +1231,50 @@ class PDFAudiobookApp(tk.Tk):
         )
         if path:
             self.output_path.set(path)
+
+    def _open_last_audio(self) -> None:
+        """Open the most recently generated MP3."""
+
+        if self._last_output_path is None:
+            return
+        try:
+            self._open_path(self._last_output_path)
+        except PDFAudiobookError as exc:
+            messagebox.showerror("Could not open audio", str(exc))
+
+    def _open_last_output_folder(self) -> None:
+        """Open the folder containing the most recently generated MP3."""
+
+        if self._last_output_path is None:
+            return
+        try:
+            self._open_path(self._last_output_path.parent)
+        except PDFAudiobookError as exc:
+            messagebox.showerror("Could not open folder", str(exc))
+
+    @staticmethod
+    def _open_path(path: Path) -> None:
+        """Open a file or folder with the platform default application."""
+
+        try:
+            if platform.system() == "Darwin":
+                subprocess.Popen(["open", str(path)])
+            elif platform.system() == "Windows":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            else:
+                opener = shutil.which("xdg-open") or shutil.which("gio")
+                if opener is None:
+                    raise PDFAudiobookError(
+                        "No supported opener was found for this system."
+                    )
+                command = [opener, str(path)]
+                if Path(opener).name == "gio":
+                    command = [opener, "open", str(path)]
+                subprocess.Popen(command)
+        except OSError as exc:
+            raise PDFAudiobookError(
+                "Your system could not open the selected file or folder."
+            ) from exc
 
     def _update_page_count(self, pdf_path: Path) -> None:
         """Read and display the number of pages in the selected PDF."""
@@ -788,7 +1303,11 @@ class PDFAudiobookApp(tk.Tk):
 
         self._is_processing = True
         self.convert_button.configure(state=tk.DISABLED)
-        self.progress_value.set(0)
+        self.open_audio_button.configure(state=tk.DISABLED)
+        self.open_folder_button.configure(state=tk.DISABLED)
+        self._last_output_path = None
+        self._set_progress(0)
+        self.progress_bar.start()
         self.status_text.set("Starting conversion...")
 
         worker = threading.Thread(
@@ -809,7 +1328,8 @@ class PDFAudiobookApp(tk.Tk):
         self._is_processing = True
         self.convert_button.configure(state=tk.DISABLED)
         self.preview_button.configure(state=tk.DISABLED)
-        self.progress_value.set(0)
+        self._set_progress(0)
+        self.progress_bar.start()
         self.status_text.set("Generating voice preview...")
 
         worker = threading.Thread(
@@ -853,6 +1373,8 @@ class PDFAudiobookApp(tk.Tk):
             volume=int(self.volume.get()),
             shadowing_mode=bool(self.shadowing_mode.get()),
             idioms_mode=bool(self.idioms_mode.get()),
+            learning_pauses=bool(self.learning_pauses.get()),
+            learning_pause_seconds=int(self.learning_pause_seconds.get()),
         )
 
     def _get_voice_preview_settings(self) -> VoicePreviewSettings:
@@ -886,17 +1408,24 @@ class PDFAudiobookApp(tk.Tk):
                 return option.voice_id
         return selected_label or default_voice_id
 
+    def _set_progress(self, percent: float) -> None:
+        """Update progress value and percentage label together."""
+
+        bounded_percent = max(0.0, min(percent, 100.0))
+        self.progress_value.set(bounded_percent)
+        self.progress_percent.set(f"{bounded_percent:.0f}%")
+
     def _run_conversion(self, settings: ConversionSettings) -> None:
         """Worker-thread conversion body."""
 
         try:
-            self._messages.put(ProgressMessage("status", "Extracting text from PDF..."))
+            self._messages.put(ProgressMessage("status", "Processing PDF..."))
 
             def progress_callback(page: int, total: int) -> None:
                 percent = (page / total) * 70
                 self._messages.put(ProgressMessage("progress", percent))
                 self._messages.put(
-                    ProgressMessage("status", f"Extracting page {page} of {total}...")
+                    ProgressMessage("status", f"Processing page {page} of {total}")
                 )
 
             text = extract_text_from_pdf(settings.pdf_path, progress_callback)
@@ -906,7 +1435,11 @@ class PDFAudiobookApp(tk.Tk):
             segments, warnings = parse_audio_script(text)
             print(f"Idioms Mode: {'ON' if settings.idioms_mode else 'OFF'}")
             if settings.idioms_mode:
-                segments = add_idiom_repeats(segments)
+                segments = add_idiom_repeats(
+                    segments,
+                    learning_pauses=settings.learning_pauses,
+                    learning_pause_seconds=settings.learning_pause_seconds,
+                )
             print(f"Shadowing Mode: {'ON' if settings.shadowing_mode else 'OFF'}")
             if settings.shadowing_mode:
                 segments = add_shadowing_repeats(segments)
@@ -929,8 +1462,16 @@ class PDFAudiobookApp(tk.Tk):
                 spanish_voice_id=settings.spanish_voice_id,
                 rate=settings.rate,
                 volume=settings.volume,
-                progress_callback=lambda current, total: self._messages.put(
-                    ProgressMessage("progress", 70 + (current / total) * 28)
+                progress_callback=lambda current, total: (
+                    self._messages.put(
+                        ProgressMessage("progress", 70 + (current / total) * 28)
+                    ),
+                    self._messages.put(
+                        ProgressMessage(
+                            "status",
+                            f"Generating segment {current} of {total}",
+                        )
+                    ),
                 ),
             )
 
@@ -1006,13 +1547,16 @@ class PDFAudiobookApp(tk.Tk):
             while True:
                 message = self._messages.get_nowait()
                 if message.kind == "progress":
-                    self.progress_value.set(float(message.payload))
+                    self._set_progress(float(message.payload))
                 elif message.kind == "status":
                     self.status_text.set(str(message.payload))
                 elif message.kind == "success":
                     self._finish_processing()
                     result = message.payload
                     path = Path(result.output_path)
+                    self._last_output_path = path
+                    self.open_audio_button.configure(state=tk.NORMAL)
+                    self.open_folder_button.configure(state=tk.NORMAL)
                     self.status_text.set(f"Done: {path}")
                     warning_text = ""
                     if result.warnings:
@@ -1021,6 +1565,8 @@ class PDFAudiobookApp(tk.Tk):
                         "Audiobook created",
                         f"Your audiobook was saved successfully:\n\n{path}{warning_text}",
                     )
+                    if self.open_audio_when_finished.get():
+                        self._open_last_audio()
                 elif message.kind == "error":
                     self._finish_processing()
                     self.status_text.set("Conversion failed.")
@@ -1041,6 +1587,7 @@ class PDFAudiobookApp(tk.Tk):
         """Restore controls after processing finishes."""
 
         self._is_processing = False
+        self.progress_bar.stop()
         self.convert_button.configure(state=tk.NORMAL)
         self.preview_button.configure(state=tk.NORMAL)
 

@@ -17,6 +17,11 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Speech rate and volume controls
 - Shadowing Mode for automatic English phrase repetition
 - Idioms Mode for English-Spanish-English learning patterns
+- Learning Pauses for timed practice gaps in Idioms Mode
+- Modern dark interface with toggle switches
+- PDF drag and drop support
+- Detailed progress with page, segment, and percentage updates
+- Open Audio and Open Folder actions after conversion
 - MP3 output file selection
 - Page count display and progress bar
 - Friendly error messages for invalid, empty, scanned, or image-only PDFs
@@ -74,14 +79,24 @@ python3 main.py
 
 ## Usage
 
-1. Click **Browse** and choose a PDF file.
+1. Drag a PDF onto the app or click **Browse PDF** and choose a PDF file.
 2. Confirm the page count shown by the app.
 3. Click **Save As** and choose where to save the MP3 audiobook.
 4. Select an English voice and a Spanish voice.
 5. Adjust speech rate and volume.
 6. Optionally enable **Shadowing Mode** for English pronunciation practice.
 7. Click **Convert to MP3**.
-8. Wait for the progress bar and success message.
+8. Follow the progress percentage, current page, and current segment updates.
+9. Use **Open Audio** or **Open Folder** after conversion, or enable **Open audio automatically when finished**.
+
+## Interface
+
+EchoLearn uses a dark, card-based desktop interface with modern toggle switches
+for learning modes, larger controls, and a progress area that shows both the
+current task and percentage completed.
+
+PDF drag and drop is supported through `tkinterdnd2`. The **Browse PDF** button
+remains available on every platform.
 
 ## Writing PDF Scripts
 
@@ -159,7 +174,9 @@ plays the audio in this order:
 
 ```text
 English
+2 second pause
 Spanish
+2 second pause
 English
 ```
 
@@ -174,12 +191,19 @@ With Idioms Mode enabled, EchoLearn reads:
 
 ```text
 To take care.
+2 second pause
 Cuidar.
+2 second pause
 To take care.
 ```
 
-English-only and Spanish-only segments keep their normal behavior. Idioms Mode
-and Shadowing Mode are independent, so either one or both can be enabled.
+**Learning Pauses** are enabled by default to insert automatic practice gaps
+inside each Idioms Mode sequence. The pause selector supports 1, 2, 3, or 5
+seconds, and the default is 2 seconds.
+
+Learning Pauses only apply when Idioms Mode is enabled. English-only and
+Spanish-only segments keep their normal behavior. Idioms Mode and Shadowing Mode
+are independent, so either one or both can be enabled.
 
 ## Voice Preview
 
@@ -223,6 +247,12 @@ Spanish voices:
 
 # Version History
 
+## v1.3.0 - June 2026
+
+UX refresh with modern dark cards, toggle switches, PDF drag and drop, animated
+progress with percentage and task text, and post-conversion Open Audio/Open
+Folder actions.
+
 ## v1.0.0 - June 2026
 
 Initial public release.
@@ -248,11 +278,6 @@ Initial public release.
 ## v1.2.0
 - Chapter export
 - Chapter navigation
-
-## v1.3.0
-- Background processing
-- Better progress estimation
-- Enhanced error handling
 
 ## v2.0.0
 - Windows installer
