@@ -97,7 +97,7 @@ assets/echolearn.icns
 Build the macOS app with PyInstaller using the icon:
 
 ```bash
-/usr/local/bin/python3 -m PyInstaller --windowed --name EchoLearn --icon assets/echolearn.icns main.py
+/usr/local/bin/python3 -m PyInstaller --windowed --name EchoLearn --icon assets/echolearn.icns --add-data assets:assets main.py
 ```
 
 To regenerate the icon after replacing `assets/echolearn_logo.png`, run:
@@ -113,7 +113,7 @@ To verify PyInstaller accepts the icon without touching the normal `dist/`
 folder, run:
 
 ```bash
-/usr/local/bin/python3 -m PyInstaller --noconfirm --windowed --name EchoLearn --icon "$(pwd)/assets/echolearn.icns" --distpath /private/tmp/echolearn-pyi-verify-dist --workpath /private/tmp/echolearn-pyi-verify-build --specpath /private/tmp/echolearn-pyi-verify-spec main.py
+/usr/local/bin/python3 -m PyInstaller --noconfirm --windowed --name EchoLearn --icon "$(pwd)/assets/echolearn.icns" --add-data "$(pwd)/assets:assets" --distpath /private/tmp/echolearn-pyi-verify-dist --workpath /private/tmp/echolearn-pyi-verify-build --specpath /private/tmp/echolearn-pyi-verify-spec main.py
 ```
 
 If Finder still shows an old icon after rebuilding, delete the previous

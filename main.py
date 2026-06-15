@@ -821,11 +821,147 @@ class PDFSelectArea(tk.Canvas):
             )
 
 
+class SplashScreen(tk.Toplevel):
+    """Short startup splash screen shown before the main window."""
+
+    def __init__(self, parent: tk.Tk, *, on_complete: Callable[[], None]) -> None:
+        super().__init__(parent)
+        self.on_complete = on_complete
+        self.logo_image: ImageTk.PhotoImage | None = self._load_logo_image()
+
+        self.overrideredirect(True)
+        self.configure(bg="#0f1117")
+        try:
+            self.attributes("-alpha", 0.98)
+        except tk.TclError:
+            pass
+        self.resizable(False, False)
+
+        width = 420
+        height = 300
+        self._center(width, height)
+
+        panel = tk.Canvas(
+            self,
+            width=width,
+            height=height,
+            bg="#0f1117",
+            highlightthickness=0,
+            bd=0,
+        )
+        panel.pack(fill=tk.BOTH, expand=True)
+        self._draw_panel(panel, width, height)
+
+        content = tk.Frame(panel, bg="#171a22")
+        panel.create_window(width / 2, height / 2, window=content)
+
+        if self.logo_image is not None:
+            tk.Label(content, image=self.logo_image, bg="#171a22").pack(
+                pady=(0, 14)
+            )
+
+        tk.Label(
+            content,
+            text=APP_TITLE,
+            bg="#171a22",
+            fg="#ffffff",
+            font=("TkDefaultFont", 26, "bold"),
+        ).pack()
+        tk.Label(
+            content,
+            text="Learn by Listening",
+            bg="#171a22",
+            fg="#b8c0cc",
+            font=("TkDefaultFont", 13),
+        ).pack(pady=(4, 16))
+        tk.Label(
+            content,
+            text="Loading your audio workspace...",
+            bg="#171a22",
+            fg="#76d996",
+            font=("TkDefaultFont", 10),
+        ).pack()
+
+        self.lift()
+        self.after(2000, self._finish)
+
+    def _load_logo_image(self) -> ImageTk.PhotoImage | None:
+        logo_path = asset_path(LOGO_FILE)
+        if not logo_path.exists():
+            return None
+
+        try:
+            with Image.open(logo_path) as logo:
+                resized_logo = logo.convert("RGBA").resize(
+                    (96, 96),
+                    Image.Resampling.LANCZOS,
+                )
+                return ImageTk.PhotoImage(resized_logo)
+        except (OSError, tk.TclError):
+            return None
+
+    def _center(self, width: int, height: int) -> None:
+        self.update_idletasks()
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _draw_panel(self, canvas: tk.Canvas, width: int, height: int) -> None:
+        margin = 10
+        radius = 28
+        x1 = margin
+        y1 = margin
+        x2 = width - margin
+        y2 = height - margin
+        points = [
+            x1 + radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2,
+            y1,
+            x2,
+            y1 + radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2,
+            x2 - radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1,
+            y2,
+            x1,
+            y2 - radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1,
+        ]
+        canvas.create_polygon(
+            points,
+            smooth=True,
+            fill="#171a22",
+            outline="#2e3442",
+            width=1,
+        )
+
+    def _finish(self) -> None:
+        try:
+            self.destroy()
+        finally:
+            self.on_complete()
+
+
 class PDFAudiobookApp(tk.Tk):
     """Main Tkinter window for the PDF audiobook converter."""
 
     def __init__(self) -> None:
         super().__init__()
+        self.withdraw()
         self.title(APP_TITLE)
         self.geometry("940x680")
         self.minsize(720, 520)
@@ -1994,6 +2130,13 @@ def main() -> None:
     ensure_app_directories()
     log_runtime_paths()
     app = PDFAudiobookApp()
+
+    def show_main_window() -> None:
+        app.deiconify()
+        app.lift()
+        app.focus_force()
+
+    SplashScreen(app, on_complete=show_main_window)
     app.mainloop()
 
 
