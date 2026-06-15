@@ -22,7 +22,7 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Official EchoLearn logo in the app header
 - Clickable PDF selection area with Browse PDF fallback
 - Detailed progress with page, segment, and percentage updates
-- Open Audio and Open Folder actions after conversion
+- Open Audio and Reveal MP3 actions after conversion
 - MP3 output file selection
 - Page count display and progress bar
 - Friendly error messages for invalid, empty, scanned, or image-only PDFs
@@ -129,7 +129,7 @@ If Finder still shows an old icon after rebuilding, delete the previous
 6. Optionally enable **Shadowing Mode** for English pronunciation practice.
 7. Click **Convert to MP3**.
 8. Follow the progress percentage, current page, and current segment updates.
-9. Use **Open Audio** or **Open Folder** after conversion, or enable **Open audio automatically when finished**.
+9. Use **Open Audio** or **Reveal MP3** after conversion, or enable **Open audio automatically when finished**.
 
 ## Interface
 
@@ -143,6 +143,15 @@ Both open the same file picker and load the selected PDF.
 Speech rate uses simple dropdown options: **Very Slow**, **Slow**, **Normal**,
 **Fast**, and **Very Fast**. Volume uses **Very Low**, **Low**, **Normal**,
 **High**, and **Very High**.
+
+## Workflow
+
+EchoLearn stays focused on four steps:
+
+1. Select a PDF.
+2. Configure learning options.
+3. Convert to MP3.
+4. Open Audio or Reveal MP3.
 
 ## Writing PDF Scripts
 

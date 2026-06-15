@@ -1390,13 +1390,13 @@ class PDFAudiobookApp(tk.Tk):
         self.open_audio_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         self.open_audio_button.configure(state=tk.DISABLED)
 
-        self.open_folder_button = ttk.Button(
+        self.reveal_mp3_button = ttk.Button(
             action_row,
-            text="Open Folder",
-            command=self._open_last_output_folder,
+            text="Reveal MP3",
+            command=self._reveal_last_mp3,
         )
-        self.open_folder_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        self.open_folder_button.configure(state=tk.DISABLED)
+        self.reveal_mp3_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self.reveal_mp3_button.configure(state=tk.DISABLED)
 
         self.convert_button = ttk.Button(
             self.conversion_card,
@@ -1739,15 +1739,15 @@ class PDFAudiobookApp(tk.Tk):
         except PDFAudiobookError as exc:
             messagebox.showerror("Could not open audio", str(exc))
 
-    def _open_last_output_folder(self) -> None:
-        """Open the folder containing the most recently generated MP3."""
+    def _reveal_last_mp3(self) -> None:
+        """Reveal the most recently generated MP3 in the file manager."""
 
         if self._last_output_path is None:
             return
         try:
-            self._open_path(self._last_output_path.parent)
+            self._reveal_path(self._last_output_path)
         except PDFAudiobookError as exc:
-            messagebox.showerror("Could not open folder", str(exc))
+            messagebox.showerror("Could not reveal MP3", str(exc))
 
     @staticmethod
     def _open_path(path: Path) -> None:
@@ -1771,6 +1771,22 @@ class PDFAudiobookApp(tk.Tk):
         except OSError as exc:
             raise PDFAudiobookError(
                 "Your system could not open the selected file or folder."
+            ) from exc
+
+    @staticmethod
+    def _reveal_path(path: Path) -> None:
+        """Reveal a file in the platform file manager."""
+
+        try:
+            if platform.system() == "Darwin":
+                subprocess.Popen(["open", "-R", str(path)])
+            elif platform.system() == "Windows":
+                subprocess.Popen(["explorer", "/select,", str(path)])
+            else:
+                PDFAudiobookApp._open_path(path.parent)
+        except OSError as exc:
+            raise PDFAudiobookError(
+                "Your system could not reveal the selected file."
             ) from exc
 
     def _update_page_count(self, pdf_path: Path) -> None:
@@ -1812,7 +1828,7 @@ class PDFAudiobookApp(tk.Tk):
         self._is_processing = True
         self.convert_button.configure(state=tk.DISABLED)
         self.open_audio_button.configure(state=tk.DISABLED)
-        self.open_folder_button.configure(state=tk.DISABLED)
+        self.reveal_mp3_button.configure(state=tk.DISABLED)
         self._last_output_path = None
         self._set_progress(0)
         self.progress_bar.start()
@@ -2087,14 +2103,18 @@ class PDFAudiobookApp(tk.Tk):
                     path = Path(result.output_path)
                     self._last_output_path = path
                     self.open_audio_button.configure(state=tk.NORMAL)
-                    self.open_folder_button.configure(state=tk.NORMAL)
+                    self.reveal_mp3_button.configure(state=tk.NORMAL)
                     self.status_text.set(f"Done: {path}")
                     warning_text = ""
                     if result.warnings:
                         warning_text = "\n\nWarnings:\n" + "\n".join(result.warnings)
                     messagebox.showinfo(
                         "Audiobook created",
-                        f"Your audiobook was saved successfully:\n\n{path}{warning_text}",
+                        (
+                            "Your audiobook was saved successfully:\n\n"
+                            f"{path}\n\nUse Open Audio to listen now, or Reveal MP3 "
+                            f"to show the file in Finder.{warning_text}"
+                        ),
                     )
                     if self.open_audio_when_finished.get():
                         self._open_last_audio()
