@@ -1,2 +1,3 @@
 pypdf
 edge-tts
+Pillow

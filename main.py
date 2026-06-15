@@ -14,6 +14,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,10 +27,12 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 import edge_tts
+from PIL import Image, ImageTk
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 APP_TITLE = "EchoLearn"
+LOGO_FILE = "echolearn_logo.png"
 DEFAULT_RATE = 0
 DEFAULT_VOLUME = 0
 DEFAULT_ENGLISH_VOICE = "en-US-JennyNeural"
@@ -68,6 +71,15 @@ FFMPEG_NOT_FOUND_MESSAGE = (
     "Install with:\n\n"
     "brew install ffmpeg"
 )
+
+
+def asset_path(filename: str) -> Path:
+    """Return an asset path for source and PyInstaller builds."""
+
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "assets" / filename  # type: ignore[attr-defined]
+
+    return Path(__file__).resolve().parent / "assets" / filename
 
 
 def ensure_app_directories() -> None:
@@ -844,6 +856,7 @@ class PDFAudiobookApp(tk.Tk):
         self._last_input_folder = ""
         self._last_output_folder = ""
         self._is_loading_settings = False
+        self.logo_image: ImageTk.PhotoImage | None = None
 
         self._configure_style()
         self._build_ui()
@@ -863,6 +876,7 @@ class PDFAudiobookApp(tk.Tk):
         self.configure(bg="#0f1117")
 
         style.configure("App.TFrame", background="#0f1117")
+        style.configure("App.TLabel", background="#0f1117")
         style.configure("Card.TFrame", background="#191c24")
         style.configure(
             "TLabel",
@@ -965,6 +979,24 @@ class PDFAudiobookApp(tk.Tk):
             darkcolor="#1db954",
             thickness=12,
         )
+
+    def _load_logo_image(self) -> ImageTk.PhotoImage | None:
+        """Load a compact header logo from the app assets folder."""
+
+        logo_path = asset_path(LOGO_FILE)
+        if not logo_path.exists():
+            return None
+
+        try:
+            with Image.open(logo_path) as logo:
+                resized_logo = logo.convert("RGBA").resize(
+                    (64, 64),
+                    Image.Resampling.LANCZOS,
+                )
+                return ImageTk.PhotoImage(resized_logo)
+        except (OSError, tk.TclError):
+            return None
+
     def _build_ui(self) -> None:
         """Create all visual controls."""
 
@@ -975,13 +1007,22 @@ class PDFAudiobookApp(tk.Tk):
 
         header = ttk.Frame(container, style="App.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        header.columnconfigure(0, weight=1)
+        header.columnconfigure(1, weight=1)
 
-        ttk.Label(header, text="EchoLearn", style="Title.TLabel").grid(
-            row=0, column=0, sticky="w"
+        self.logo_image = self._load_logo_image()
+        if self.logo_image is not None:
+            self.iconphoto(True, self.logo_image)
+            ttk.Label(
+                header,
+                image=self.logo_image,
+                style="App.TLabel",
+            ).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+
+        ttk.Label(header, text=APP_TITLE, style="Title.TLabel").grid(
+            row=0, column=1, sticky="w"
         )
         ttk.Label(header, text="Learn by Listening", style="Subtitle.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(5, 0)
+            row=1, column=1, sticky="w", pady=(5, 0)
         )
 
         scroll_area = ttk.Frame(container, style="App.TFrame")

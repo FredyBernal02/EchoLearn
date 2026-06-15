@@ -19,6 +19,7 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Idioms Mode for English-Spanish-English learning patterns
 - Learning Pauses for timed practice gaps in Idioms Mode
 - Modern dark interface with toggle switches
+- Official EchoLearn logo in the app header
 - Clickable PDF selection area with Browse PDF fallback
 - Detailed progress with page, segment, and percentage updates
 - Open Audio and Open Folder actions after conversion
@@ -31,6 +32,8 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 ```text
 EchoLearn/
 ├── assets/
+│   ├── echolearn_logo.png
+│   └── echolearn.icns
 ├── main.py
 ├── requirements.txt
 ├── README.md
@@ -76,6 +79,45 @@ On some macOS or Linux installations, use:
 ```bash
 python3 main.py
 ```
+
+## Logo and macOS App Icon
+
+The official EchoLearn logo lives at:
+
+```text
+assets/echolearn_logo.png
+```
+
+The macOS app icon is generated from that PNG and saved as:
+
+```text
+assets/echolearn.icns
+```
+
+Build the macOS app with PyInstaller using the icon:
+
+```bash
+/usr/local/bin/python3 -m PyInstaller --windowed --name EchoLearn --icon assets/echolearn.icns main.py
+```
+
+To regenerate the icon after replacing `assets/echolearn_logo.png`, run:
+
+```bash
+/usr/local/bin/python3 scripts/create_macos_icon.py
+```
+
+This creates all required files in `assets/echolearn.iconset/` and writes
+`assets/echolearn.icns`.
+
+To verify PyInstaller accepts the icon without touching the normal `dist/`
+folder, run:
+
+```bash
+/usr/local/bin/python3 -m PyInstaller --noconfirm --windowed --name EchoLearn --icon "$(pwd)/assets/echolearn.icns" --distpath /private/tmp/echolearn-pyi-verify-dist --workpath /private/tmp/echolearn-pyi-verify-build --specpath /private/tmp/echolearn-pyi-verify-spec main.py
+```
+
+If Finder still shows an old icon after rebuilding, delete the previous
+`build/` and `dist/` folders, rebuild the app, and reopen Finder.
 
 ## Usage
 
