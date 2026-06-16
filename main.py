@@ -37,9 +37,6 @@ DEFAULT_RATE = 0
 DEFAULT_VOLUME = 0
 DEFAULT_ENGLISH_VOICE = "en-US-JennyNeural"
 DEFAULT_SPANISH_VOICE = "es-CO-SalomeNeural"
-DEFAULT_SHADOWING_PAUSE_SECONDS = 3
-DEFAULT_LEARNING_PAUSES_ENABLED = True
-DEFAULT_LEARNING_PAUSE_SECONDS = 2
 DEFAULT_UNTAGGED_LANGUAGE = "EN"
 DEFAULT_AUTO_DETECT_LANGUAGE = True
 DEFAULT_AUTO_LEARNING_PAUSES_ENABLED = False
@@ -286,10 +283,6 @@ class ConversionSettings:
     spanish_voice_id: str
     rate: int
     volume: int
-    shadowing_mode: bool
-    idioms_mode: bool
-    learning_pauses: bool
-    learning_pause_seconds: int
     auto_detect_language: bool
     default_untagged_language: str
     auto_learning_pauses: bool
@@ -805,71 +798,6 @@ def parse_audio_script(
     except OSError:
         traceback.print_exc()
     return segments, warnings
-
-
-def add_shadowing_repeats(segments: list[ScriptSegment]) -> list[ScriptSegment]:
-    """Repeat English text segments after a short pause for shadowing practice."""
-
-    shadowed_segments: list[ScriptSegment] = []
-    for index, segment in enumerate(segments, start=1):
-        shadowed_segments.append(segment)
-        if segment.kind == "text" and segment.language == "EN":
-            print(f"Adding shadowing repeat for segment {index}")
-            shadowed_segments.append(
-                ScriptSegment(
-                    kind="pause",
-                    seconds=DEFAULT_SHADOWING_PAUSE_SECONDS,
-                )
-            )
-            shadowed_segments.append(segment)
-
-    return shadowed_segments
-
-
-def add_idiom_repeats(
-    segments: list[ScriptSegment],
-    *,
-    learning_pauses: bool,
-    learning_pause_seconds: int,
-) -> list[ScriptSegment]:
-    """Repeat English once after each consecutive English/Spanish text pair."""
-
-    idiom_segments: list[ScriptSegment] = []
-    learning_pause = ScriptSegment(kind="pause", seconds=learning_pause_seconds)
-    index = 0
-    while index < len(segments):
-        current_segment = segments[index]
-        next_segment = segments[index + 1] if index + 1 < len(segments) else None
-
-        is_idiom_pair = (
-            current_segment.kind == "text"
-            and current_segment.language == "EN"
-            and next_segment is not None
-            and next_segment.kind == "text"
-            and next_segment.language == "ES"
-        )
-        if is_idiom_pair:
-            print(f"Adding idiom repeat for segment {index + 1}")
-            if learning_pauses:
-                print(f"Adding learning pauses: {learning_pause_seconds} seconds")
-                idiom_segments.extend(
-                    [
-                        current_segment,
-                        learning_pause,
-                        next_segment,
-                        learning_pause,
-                        current_segment,
-                    ]
-                )
-            else:
-                idiom_segments.extend([current_segment, next_segment, current_segment])
-            index += 2
-            continue
-
-        idiom_segments.append(current_segment)
-        index += 1
-
-    return idiom_segments
 
 
 def add_auto_learning_pauses(
@@ -1534,10 +1462,6 @@ class PDFAudiobookApp(tk.Tk):
         self.volume = tk.IntVar(value=DEFAULT_VOLUME)
         self.selected_rate_label = tk.StringVar(value="Normal")
         self.selected_volume_label = tk.StringVar(value="Normal")
-        self.shadowing_mode = tk.BooleanVar(value=False)
-        self.idioms_mode = tk.BooleanVar(value=False)
-        self.learning_pauses = tk.BooleanVar(value=DEFAULT_LEARNING_PAUSES_ENABLED)
-        self.learning_pause_seconds = tk.IntVar(value=DEFAULT_LEARNING_PAUSE_SECONDS)
         self.auto_learning_pauses = tk.BooleanVar(
             value=DEFAULT_AUTO_LEARNING_PAUSES_ENABLED
         )
@@ -1875,48 +1799,13 @@ class PDFAudiobookApp(tk.Tk):
 
         ToggleSwitch(
             self.learning_card,
-            text="Shadowing Mode",
-            variable=self.shadowing_mode,
-            background="#191c24",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 0))
-
-        ToggleSwitch(
-            self.learning_card,
-            text="Idioms Mode",
-            variable=self.idioms_mode,
-            background="#191c24",
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
-
-        ToggleSwitch(
-            self.learning_card,
-            text="Learning Pauses",
-            variable=self.learning_pauses,
-            background="#191c24",
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
-
-        ttk.Label(self.learning_card, text="Learning pause seconds").grid(
-            row=6, column=0, sticky="w", pady=(10, 0)
-        )
-        self.learning_pause_menu = ttk.Combobox(
-            self.learning_card,
-            textvariable=self.learning_pause_seconds,
-            state="readonly",
-            values=[1, 2, 3, 5],
-            width=6,
-        )
-        self.learning_pause_menu.grid(
-            row=6, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
-        )
-
-        ToggleSwitch(
-            self.learning_card,
             text="Auto Learning Pauses",
             variable=self.auto_learning_pauses,
             background="#191c24",
-        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 0))
 
         ttk.Label(self.learning_card, text="Auto pause duration").grid(
-            row=8, column=0, sticky="w", pady=(10, 0)
+            row=4, column=0, sticky="w", pady=(10, 0)
         )
         self.auto_pause_menu = ttk.Combobox(
             self.learning_card,
@@ -1926,7 +1815,7 @@ class PDFAudiobookApp(tk.Tk):
             width=10,
         )
         self.auto_pause_menu.grid(
-            row=8, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
+            row=4, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
         )
         self.auto_pause_menu.bind(
             "<<ComboboxSelected>>",
@@ -2193,26 +2082,6 @@ class PDFAudiobookApp(tk.Tk):
                 self.selected_volume_label.set(volume_label)
                 self._update_volume_from_label()
 
-            self.shadowing_mode.set(bool(settings.get("shadowing_mode", False)))
-            self.idioms_mode.set(bool(settings.get("idioms_mode", False)))
-            self.learning_pauses.set(
-                bool(
-                    settings.get(
-                        "learning_pauses",
-                        DEFAULT_LEARNING_PAUSES_ENABLED,
-                    )
-                )
-            )
-            pause_seconds = settings.get(
-                "learning_pause_seconds",
-                DEFAULT_LEARNING_PAUSE_SECONDS,
-            )
-            try:
-                pause_seconds_value = int(pause_seconds)
-            except (TypeError, ValueError):
-                pause_seconds_value = DEFAULT_LEARNING_PAUSE_SECONDS
-            if pause_seconds_value in {1, 2, 3, 5}:
-                self.learning_pause_seconds.set(pause_seconds_value)
             self.auto_learning_pauses.set(
                 bool(
                     settings.get(
@@ -2271,10 +2140,6 @@ class PDFAudiobookApp(tk.Tk):
             self.selected_spanish_voice,
             self.selected_rate_label,
             self.selected_volume_label,
-            self.shadowing_mode,
-            self.idioms_mode,
-            self.learning_pauses,
-            self.learning_pause_seconds,
             self.auto_learning_pauses,
             self.selected_auto_pause_label,
             self.auto_pause_seconds,
@@ -2293,10 +2158,6 @@ class PDFAudiobookApp(tk.Tk):
             "spanish_voice": self.selected_spanish_voice.get(),
             "speech_rate": self.selected_rate_label.get(),
             "volume": self.selected_volume_label.get(),
-            "shadowing_mode": bool(self.shadowing_mode.get()),
-            "idioms_mode": bool(self.idioms_mode.get()),
-            "learning_pauses": bool(self.learning_pauses.get()),
-            "learning_pause_seconds": int(self.learning_pause_seconds.get()),
             "auto_learning_pauses": bool(self.auto_learning_pauses.get()),
             "auto_pause_seconds": int(self.auto_pause_seconds.get()),
             "auto_detect_language": bool(self.auto_detect_language.get()),
@@ -2553,10 +2414,6 @@ class PDFAudiobookApp(tk.Tk):
             ),
             rate=int(self.rate.get()),
             volume=int(self.volume.get()),
-            shadowing_mode=bool(self.shadowing_mode.get()),
-            idioms_mode=bool(self.idioms_mode.get()),
-            learning_pauses=bool(self.learning_pauses.get()),
-            learning_pause_seconds=int(self.learning_pause_seconds.get()),
             auto_detect_language=bool(self.auto_detect_language.get()),
             default_untagged_language=self._default_untagged_language_code(),
             auto_learning_pauses=bool(self.auto_learning_pauses.get()),
@@ -2670,29 +2527,17 @@ class PDFAudiobookApp(tk.Tk):
                 text,
                 auto_detect_language=settings.auto_detect_language,
                 default_language=settings.default_untagged_language,
-                auto_learning_pauses_enabled=(
-                    settings.auto_learning_pauses and not settings.idioms_mode
-                ),
+                auto_learning_pauses_enabled=settings.auto_learning_pauses,
             )
             print(
                 "Auto Learning Pauses: "
                 f"{'ON' if settings.auto_learning_pauses else 'OFF'}"
             )
-            if settings.auto_learning_pauses and not settings.idioms_mode:
+            if settings.auto_learning_pauses:
                 segments = add_auto_learning_pauses(
                     segments,
                     auto_pause_seconds=settings.auto_pause_seconds,
                 )
-            print(f"Idioms Mode: {'ON' if settings.idioms_mode else 'OFF'}")
-            if settings.idioms_mode:
-                segments = add_idiom_repeats(
-                    segments,
-                    learning_pauses=settings.learning_pauses,
-                    learning_pause_seconds=settings.learning_pause_seconds,
-                )
-            print(f"Shadowing Mode: {'ON' if settings.shadowing_mode else 'OFF'}")
-            if settings.shadowing_mode:
-                segments = add_shadowing_repeats(segments)
             if DEBUG_MODE:
                 try:
                     write_debug_segments(segments, DEBUG_SEGMENTS_FILE)
