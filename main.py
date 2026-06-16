@@ -40,6 +40,8 @@ DEFAULT_SPANISH_VOICE = "es-CO-SalomeNeural"
 DEFAULT_SHADOWING_PAUSE_SECONDS = 3
 DEFAULT_LEARNING_PAUSES_ENABLED = True
 DEFAULT_LEARNING_PAUSE_SECONDS = 2
+DEFAULT_UNTAGGED_LANGUAGE = "EN"
+DEFAULT_AUTO_DETECT_LANGUAGE = True
 RATE_OPTIONS = {
     "Very Slow": -50,
     "Slow": -25,
@@ -57,11 +59,139 @@ VOLUME_OPTIONS = {
 SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?;:])\s+")
+SPANISH_CHARACTER_PATTERN = re.compile(r"[áéíóúüñÁÉÍÓÚÜÑ¿¡]")
+WORD_PATTERN = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ']+")
+SPANISH_WORDS = {
+    "a",
+    "al",
+    "algo",
+    "abandonan",
+    "ahora",
+    "como",
+    "con",
+    "cuando",
+    "de",
+    "del",
+    "desde",
+    "donde",
+    "el",
+    "ella",
+    "ellos",
+    "en",
+    "era",
+    "es",
+    "esta",
+    "estas",
+    "este",
+    "estos",
+    "estoy",
+    "fue",
+    "gracias",
+    "hay",
+    "hola",
+    "idioma",
+    "la",
+    "las",
+    "lo",
+    "los",
+    "mas",
+    "me",
+    "mi",
+    "mis",
+    "muchas",
+    "muy",
+    "no",
+    "nos",
+    "objetivo",
+    "o",
+    "para",
+    "personas",
+    "pero",
+    "por",
+    "porque",
+    "pronto",
+    "propio",
+    "que",
+    "se",
+    "si",
+    "sin",
+    "su",
+    "sus",
+    "tambien",
+    "te",
+    "tiene",
+    "tu",
+    "un",
+    "una",
+    "y",
+    "yo",
+}
+ENGLISH_WORDS = {
+    "a",
+    "about",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "but",
+    "can",
+    "do",
+    "for",
+    "from",
+    "have",
+    "he",
+    "her",
+    "his",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "not",
+    "of",
+    "on",
+    "or",
+    "our",
+    "practice",
+    "she",
+    "so",
+    "that",
+    "the",
+    "their",
+    "there",
+    "they",
+    "this",
+    "today",
+    "to",
+    "going",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "will",
+    "with",
+    "you",
+    "your",
+}
+UNCERTAIN_DETECTION_WARNING = (
+    "Some text was processed using the default language because EchoLearn could "
+    "not detect the language confidently."
+)
 DEBUG_MODE = True
 APP_DATA_DIR = Path.home() / "Library" / "Application Support" / APP_TITLE
 LOGS_DIR = APP_DATA_DIR / "logs"
 DEBUG_SEGMENTS_FILE = LOGS_DIR / "debug_segments.txt"
 DEBUG_NORMALIZED_TEXT_FILE = LOGS_DIR / "debug_normalized_text.txt"
+LANGUAGE_DETECTION_DEBUG_FILE = LOGS_DIR / "language_detection_debug.txt"
 SETTINGS_FILE = APP_DATA_DIR / "echolearn_settings.json"
 FFMPEG_NOT_FOUND_MESSAGE = (
     "FFmpeg was not found.\n"
@@ -149,6 +279,8 @@ class ConversionSettings:
     idioms_mode: bool
     learning_pauses: bool
     learning_pause_seconds: int
+    auto_detect_language: bool
+    default_untagged_language: str
 
 
 @dataclass(frozen=True)
@@ -169,6 +301,9 @@ class ScriptSegment:
     text: str = ""
     language: str = "EN"
     seconds: int = 0
+    language_source: str = "default"
+    detection_confident: bool = True
+    detection_score: int = 0
 
 
 @dataclass(frozen=True)
@@ -244,35 +379,275 @@ def extract_text_from_pdf(
     return full_text
 
 
-def parse_audio_script(text: str) -> tuple[list[ScriptSegment], list[str]]:
-    """Turn PDF text with [EN], [ES], and [PAUSE_X] tags into audio requests."""
+def split_sentences(text: str) -> list[str]:
+    """Split text into sentence-sized units while preserving order."""
+
+    sentences = [
+        normalize_text(sentence)
+        for sentence in SENTENCE_SPLIT_PATTERN.split(text)
+        if normalize_text(sentence)
+    ]
+    return sentences or [normalize_text(text)]
+
+
+def split_untagged_lines(raw_text: str) -> list[str]:
+    """Split normal PDF text into non-empty line units before detection."""
+
+    cleaned_text = normalize_text(raw_text)
+    if not cleaned_text or TAG_ONLY_PATTERN.fullmatch(cleaned_text):
+        return []
+
+    return [
+        normalized_line
+        for line in cleaned_text.splitlines()
+        if (normalized_line := normalize_text(line))
+    ]
+
+
+def split_line_for_detection(line_text: str) -> list[str]:
+    """Keep each non-empty line as its own detection unit."""
+
+    return [line_text]
+
+
+def format_language_detection_debug(text: str, language: str) -> str:
+    """Return the exact debug block for one language detection unit."""
+
+    return f"LANG UNIT:\n{text}\nDETECTED:\n{language}\n"
+
+
+def log_language_detection_unit(
+    debug_entries: list[str],
+    *,
+    text: str,
+    language: str,
+) -> None:
+    """Print and collect language detection debug output."""
+
+    debug_entry = format_language_detection_debug(text, language)
+    print(debug_entry, end="")
+    debug_entries.append(debug_entry)
+
+
+def language_name(language: str) -> str:
+    """Return the display name for an internal language code."""
+
+    return "Spanish" if language == "ES" else "English"
+
+
+def detect_language_for_text(
+    text: str,
+    *,
+    default_language: str,
+    auto_detect_language: bool,
+) -> tuple[str, str, bool, int]:
+    """Detect English or Spanish for untagged text using local heuristics."""
+
+    normalized_default = "ES" if default_language == "ES" else "EN"
+    if not auto_detect_language:
+        return normalized_default, "default", True, 0
+
+    normalized_text = normalize_text(text)
+    words = [word.lower() for word in WORD_PATTERN.findall(normalized_text)]
+    spanish_score = sum(1 for word in words if word in SPANISH_WORDS)
+    english_score = sum(1 for word in words if word in ENGLISH_WORDS)
+
+    if SPANISH_CHARACTER_PATTERN.search(normalized_text):
+        spanish_score += 3
+    if "¿" in normalized_text or "¡" in normalized_text:
+        spanish_score += 2
+
+    score_delta = spanish_score - english_score
+    if score_delta >= 2:
+        return "ES", "auto-detect", True, score_delta
+    if score_delta <= -2:
+        return "EN", "auto-detect", True, abs(score_delta)
+    if spanish_score > english_score and spanish_score >= 2:
+        return "ES", "auto-detect", True, score_delta
+    if english_score > spanish_score and english_score >= 2:
+        return "EN", "auto-detect", True, abs(score_delta)
+
+    return normalized_default, "default", False, abs(score_delta)
+
+
+def language_signal_for_word(word: str) -> str | None:
+    """Return a clear per-word language signal, ignoring ambiguous words."""
+
+    normalized_word = word.lower()
+    if SPANISH_CHARACTER_PATTERN.search(word):
+        return "ES"
+
+    is_spanish = normalized_word in SPANISH_WORDS
+    is_english = normalized_word in ENGLISH_WORDS
+    if is_spanish and not is_english:
+        return "ES"
+    if is_english and not is_spanish:
+        return "EN"
+    return None
+
+
+def split_mixed_language_text(
+    text: str,
+    *,
+    default_language: str,
+    auto_detect_language: bool,
+) -> list[tuple[str, str, str, bool, int]]:
+    """Split one text unit on a clear mixed-language boundary."""
+
+    base_detection = detect_language_for_text(
+        text,
+        default_language=default_language,
+        auto_detect_language=auto_detect_language,
+    )
+    if not auto_detect_language:
+        return [(text, *base_detection)]
+
+    word_matches = list(WORD_PATTERN.finditer(text))
+    signals = [
+        (match.start(), language_signal_for_word(match.group(0)))
+        for match in word_matches
+    ]
+    clear_signals = [
+        (position, signal)
+        for position, signal in signals
+        if signal in {"EN", "ES"}
+    ]
+    if len(clear_signals) < 3:
+        return [(text, *base_detection)]
+
+    signal_languages = {signal for _position, signal in clear_signals}
+    if signal_languages != {"EN", "ES"}:
+        return [(text, *base_detection)]
+
+    transitions = [
+        index
+        for index in range(1, len(clear_signals))
+        if clear_signals[index][1] != clear_signals[index - 1][1]
+    ]
+    if len(transitions) != 1:
+        return [(text, *base_detection)]
+
+    transition_index = transitions[0]
+    leading_signals = clear_signals[:transition_index]
+    trailing_signals = clear_signals[transition_index:]
+    if len(trailing_signals) < 2:
+        return [(text, *base_detection)]
+
+    boundary = clear_signals[transition_index][0]
+    first_text = normalize_text(text[:boundary])
+    second_text = normalize_text(text[boundary:])
+    if not first_text or not second_text:
+        return [(text, *base_detection)]
+
+    first_language = leading_signals[-1][1]
+    second_language = trailing_signals[0][1]
+    first_score = len(leading_signals)
+    second_score = len(trailing_signals)
+    return [
+        (first_text, first_language, "auto-detect", True, first_score),
+        (second_text, second_language, "auto-detect", True, second_score),
+    ]
+
+
+def should_warn_about_uncertain_detection(segments: list[ScriptSegment]) -> bool:
+    """Return True when many text segments needed the default language."""
+
+    text_segments = [segment for segment in segments if segment.kind == "text"]
+    uncertain_segments = [
+        segment
+        for segment in text_segments
+        if (
+            segment.language_source == "default"
+            and not segment.detection_confident
+        )
+    ]
+    if not uncertain_segments:
+        return False
+
+    uncertain_count = len(uncertain_segments)
+    uncertain_ratio = uncertain_count / max(len(text_segments), 1)
+    return uncertain_count >= 5 or (
+        uncertain_count >= 3 and uncertain_ratio >= 0.25
+    )
+
+
+def parse_audio_script(
+    text: str,
+    *,
+    auto_detect_language: bool = DEFAULT_AUTO_DETECT_LANGUAGE,
+    default_language: str = DEFAULT_UNTAGGED_LANGUAGE,
+    language_debug_path: Path = LANGUAGE_DETECTION_DEBUG_FILE,
+) -> tuple[list[ScriptSegment], list[str]]:
+    """Turn PDF text, tags, and auto language detection into audio requests."""
 
     segments: list[ScriptSegment] = []
     warnings: list[str] = []
+    language_debug_entries: list[str] = []
     current_language = "EN"
+    language_explicit_active = False
     position = 0
 
-    def add_text_segment(raw_text: str) -> None:
+    def add_text_segment(raw_text: str, *, explicit_language: bool) -> None:
         cleaned_text = normalize_text(raw_text)
         if cleaned_text:
             if TAG_ONLY_PATTERN.fullmatch(cleaned_text):
                 return
-            segments.append(
-                ScriptSegment(
+            if explicit_language:
+                segment = ScriptSegment(
                     kind="text",
                     text=cleaned_text,
                     language=current_language,
+                    language_source="explicit tag",
                 )
-            )
+                log_language_detection_unit(
+                    language_debug_entries,
+                    text=segment.text,
+                    language=segment.language,
+                )
+                segments.append(segment)
+                return
+
+            for line_text in split_untagged_lines(cleaned_text):
+                for segment_text in split_line_for_detection(line_text):
+                    detected_parts = split_mixed_language_text(
+                        segment_text,
+                        default_language=default_language,
+                        auto_detect_language=auto_detect_language,
+                    )
+                    for (
+                        part_text,
+                        language,
+                        source,
+                        confident,
+                        score,
+                    ) in detected_parts:
+                        segment = ScriptSegment(
+                            kind="text",
+                            text=part_text,
+                            language=language,
+                            language_source=source,
+                            detection_confident=confident,
+                            detection_score=score,
+                        )
+                        log_language_detection_unit(
+                            language_debug_entries,
+                            text=segment.text,
+                            language=segment.language,
+                        )
+                        segments.append(segment)
 
     for match in TAG_PATTERN.finditer(text):
-        add_text_segment(text[position : match.start()])
+        add_text_segment(
+            text[position : match.start()],
+            explicit_language=language_explicit_active,
+        )
 
         tag = match.group(1).upper()
         pause_seconds = match.group(2)
 
         if tag in {"EN", "ES"}:
             current_language = tag
+            language_explicit_active = True
         elif pause_seconds and int(pause_seconds) in SUPPORTED_PAUSES:
             segments.append(
                 ScriptSegment(kind="pause", seconds=int(pause_seconds))
@@ -282,7 +657,16 @@ def parse_audio_script(text: str) -> tuple[list[ScriptSegment], list[str]]:
 
         position = match.end()
 
-    add_text_segment(text[position:])
+    add_text_segment(text[position:], explicit_language=language_explicit_active)
+    if auto_detect_language and should_warn_about_uncertain_detection(segments):
+        warnings.append(UNCERTAIN_DETECTION_WARNING)
+    try:
+        write_language_detection_debug(
+            language_debug_entries,
+            language_debug_path,
+        )
+    except OSError:
+        traceback.print_exc()
     return segments, warnings
 
 
@@ -360,9 +744,19 @@ def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> Non
             debug_file.write(f"Segment {index}\n")
             debug_file.write(f"kind={segment.kind}\n")
             debug_file.write(f"language={segment.language}\n")
+            debug_file.write(f"language_source={segment.language_source}\n")
+            debug_file.write(f"detection_confident={segment.detection_confident}\n")
+            debug_file.write(f"detection_score={segment.detection_score}\n")
             debug_file.write(f"seconds={segment.seconds}\n")
             debug_file.write(f"text={segment.text!r}\n")
             debug_file.write("\n")
+
+
+def write_language_detection_debug(debug_entries: list[str], debug_path: Path) -> None:
+    """Write exact language detection debug blocks to disk."""
+
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
+    debug_path.write_text("".join(debug_entries), encoding="utf-8")
 
 
 def write_debug_text(text: str, debug_path: Path) -> None:
@@ -980,6 +1374,10 @@ class PDFAudiobookApp(tk.Tk):
         self.idioms_mode = tk.BooleanVar(value=False)
         self.learning_pauses = tk.BooleanVar(value=DEFAULT_LEARNING_PAUSES_ENABLED)
         self.learning_pause_seconds = tk.IntVar(value=DEFAULT_LEARNING_PAUSE_SECONDS)
+        self.auto_detect_language = tk.BooleanVar(value=DEFAULT_AUTO_DETECT_LANGUAGE)
+        self.default_untagged_language = tk.StringVar(
+            value=language_name(DEFAULT_UNTAGGED_LANGUAGE)
+        )
         self.open_audio_when_finished = tk.BooleanVar(value=False)
         self.progress_value = tk.DoubleVar(value=0)
         self.progress_percent = tk.StringVar(value="0%")
@@ -1246,6 +1644,26 @@ class PDFAudiobookApp(tk.Tk):
         )
         self.preview_button.grid(
             row=3, column=1, sticky="w", padx=(12, 0), pady=(14, 0)
+        )
+
+        ToggleSwitch(
+            self.voices_card,
+            text="Auto-detect language",
+            variable=self.auto_detect_language,
+            background="#191c24",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(14, 0))
+
+        ttk.Label(self.voices_card, text="Default language for untagged text").grid(
+            row=5, column=0, sticky="w", pady=(12, 0)
+        )
+        self.default_language_menu = ttk.Combobox(
+            self.voices_card,
+            textvariable=self.default_untagged_language,
+            state="readonly",
+            values=["English", "Spanish"],
+        )
+        self.default_language_menu.grid(
+            row=5, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
         )
 
         self.learning_card = self._create_card(content)
@@ -1601,6 +2019,22 @@ class PDFAudiobookApp(tk.Tk):
                 pause_seconds_value = DEFAULT_LEARNING_PAUSE_SECONDS
             if pause_seconds_value in {1, 2, 3, 5}:
                 self.learning_pause_seconds.set(pause_seconds_value)
+            self.auto_detect_language.set(
+                bool(
+                    settings.get(
+                        "auto_detect_language",
+                        DEFAULT_AUTO_DETECT_LANGUAGE,
+                    )
+                )
+            )
+            default_language = str(
+                settings.get(
+                    "default_untagged_language",
+                    DEFAULT_UNTAGGED_LANGUAGE,
+                )
+            ).upper()
+            if default_language in {"EN", "ES"}:
+                self.default_untagged_language.set(language_name(default_language))
             self.open_audio_when_finished.set(
                 bool(settings.get("open_audio_when_finished", False))
             )
@@ -1626,6 +2060,8 @@ class PDFAudiobookApp(tk.Tk):
             self.idioms_mode,
             self.learning_pauses,
             self.learning_pause_seconds,
+            self.auto_detect_language,
+            self.default_untagged_language,
             self.open_audio_when_finished,
         ]
         for variable in watched_variables:
@@ -1643,6 +2079,8 @@ class PDFAudiobookApp(tk.Tk):
             "idioms_mode": bool(self.idioms_mode.get()),
             "learning_pauses": bool(self.learning_pauses.get()),
             "learning_pause_seconds": int(self.learning_pause_seconds.get()),
+            "auto_detect_language": bool(self.auto_detect_language.get()),
+            "default_untagged_language": self._default_untagged_language_code(),
             "open_audio_when_finished": bool(self.open_audio_when_finished.get()),
             "last_input_folder": self._last_input_folder,
             "last_output_folder": self._last_output_folder,
@@ -1899,7 +2337,14 @@ class PDFAudiobookApp(tk.Tk):
             idioms_mode=bool(self.idioms_mode.get()),
             learning_pauses=bool(self.learning_pauses.get()),
             learning_pause_seconds=int(self.learning_pause_seconds.get()),
+            auto_detect_language=bool(self.auto_detect_language.get()),
+            default_untagged_language=self._default_untagged_language_code(),
         )
+
+    def _default_untagged_language_code(self) -> str:
+        """Return the language code selected for uncertain untagged text."""
+
+        return "ES" if self.default_untagged_language.get() == "Spanish" else "EN"
 
     def _get_voice_preview_settings(self) -> VoicePreviewSettings:
         """Collect voice preview settings without requiring a PDF."""
@@ -1972,7 +2417,19 @@ class PDFAudiobookApp(tk.Tk):
                 except OSError:
                     traceback.print_exc()
 
-            segments, warnings = parse_audio_script(text)
+            print(
+                "Auto-detect language: "
+                f"{'ON' if settings.auto_detect_language else 'OFF'}"
+            )
+            print(
+                "Default language for untagged text: "
+                f"{settings.default_untagged_language}"
+            )
+            segments, warnings = parse_audio_script(
+                text,
+                auto_detect_language=settings.auto_detect_language,
+                default_language=settings.default_untagged_language,
+            )
             print(f"Idioms Mode: {'ON' if settings.idioms_mode else 'OFF'}")
             if settings.idioms_mode:
                 segments = add_idiom_repeats(

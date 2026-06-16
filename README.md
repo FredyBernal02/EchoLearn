@@ -4,7 +4,9 @@ Convert PDFs into natural-sounding audiobooks using Microsoft Edge TTS voices, b
 
 A cross-platform desktop app that converts selectable-text PDF files into MP3 audiobooks.
 
-The app supports simple script tags inside the PDF text, so one audiobook can switch between English and Spanish voices and include timed pauses.
+The app can automatically detect English and Spanish in normal selectable-text
+PDFs. It also supports simple script tags inside the PDF text for advanced
+voice control and timed pauses.
 
 ## Features
 
@@ -13,6 +15,8 @@ The app supports simple script tags inside the PDF text, so one audiobook can sw
 - Text-to-speech MP3 generation with `edge-tts`
 - Real timed pause generation with FFmpeg
 - English and Spanish voice selectors
+- Automatic English/Spanish detection for untagged PDF text
+- Default language setting for uncertain untagged text
 - Voice Preview for selected voices and speech settings
 - Speech rate and volume controls
 - Shadowing Mode for automatic English phrase repetition
@@ -125,11 +129,13 @@ If Finder still shows an old icon after rebuilding, delete the previous
 2. Confirm the page count shown by the app.
 3. Click **Save As** and choose where to save the MP3 audiobook.
 4. Select an English voice and a Spanish voice.
-5. Adjust speech rate and volume.
-6. Optionally enable **Shadowing Mode** for English pronunciation practice.
-7. Click **Convert to MP3**.
-8. Follow the progress percentage, current page, and current segment updates.
-9. Use **Open Audio** or **Reveal MP3** after conversion, or enable **Open audio automatically when finished**.
+5. Leave **Auto-detect language** on for normal PDFs, or choose the default
+   language for untagged text.
+6. Adjust speech rate and volume.
+7. Optionally enable **Shadowing Mode** for English pronunciation practice.
+8. Click **Convert to MP3**.
+9. Follow the progress percentage, current page, and current segment updates.
+10. Use **Open Audio** or **Reveal MP3** after conversion, or enable **Open audio automatically when finished**.
 
 ## Interface
 
@@ -144,6 +150,11 @@ Speech rate uses simple dropdown options: **Very Slow**, **Slow**, **Normal**,
 **Fast**, and **Very Fast**. Volume uses **Very Low**, **Low**, **Normal**,
 **High**, and **Very High**.
 
+The Voices section includes **Auto-detect language** and **Default language for
+untagged text**. Auto-detect is on by default. When EchoLearn cannot confidently
+detect a segment, it uses the selected default language, which is English by
+default.
+
 ## Workflow
 
 EchoLearn stays focused on four steps:
@@ -155,7 +166,14 @@ EchoLearn stays focused on four steps:
 
 ## Writing PDF Scripts
 
-Add tags directly in your PDF text to control the audiobook.
+EchoLearn works with normal selectable-text PDFs without language tags. For
+untagged text, it checks each paragraph or sentence for Spanish characters,
+common Spanish words, and common English words, then chooses the matching voice.
+If detection is uncertain, it uses **Default language for untagged text**.
+
+Tags are still supported for advanced control. Add tags directly in your PDF
+text when you want to force a specific voice or add timed pauses. `[EN]` and
+`[ES]` always override automatic detection.
 
 Use `[EN]` before English text:
 
@@ -207,16 +225,19 @@ The app will:
 - Insert timed silent MP3 segments for supported `[PAUSE_X]` tags
 - Skip the tags so they are not spoken out loud
 
-If your PDF has no `[EN]` or `[ES]` tags, the app reads all text with the selected English voice.
+If **Auto-detect language** is off, untagged text is read with the selected
+default language instead. If many segments need that fallback while auto-detect
+is on, EchoLearn shows a friendly warning after conversion.
 
-Unsupported pause tags, such as `[PAUSE_4]`, are ignored and shown as a friendly warning after conversion.
+Unsupported pause tags, such as `[PAUSE_4]`, are ignored and shown as a friendly
+warning after conversion.
 
 ## Shadowing Mode
 
 Enable **Shadowing Mode** in the app to automatically repeat each English phrase.
-After every `[EN]` speech segment, EchoLearn inserts a short pause and then plays
-the same English phrase again. This helps with pronunciation practice by giving
-you a listen-and-repeat pattern without adding any new tags to your PDF.
+After every English speech segment, EchoLearn inserts a short pause and then
+plays the same English phrase again. This helps with pronunciation practice by
+giving you a listen-and-repeat pattern without adding any new tags to your PDF.
 
 Shadowing only applies to English text. Spanish text and explicit pause tags keep
 their normal behavior.
@@ -267,8 +288,9 @@ currently selected English and Spanish voices before generating a full audiobook
 
 ## Saved Settings
 
-EchoLearn remembers your last selected voices, learning modes, folders, speech
-rate, and volume. On macOS, settings are saved automatically at
+EchoLearn remembers your last selected voices, language detection options,
+learning modes, folders, speech rate, and volume. On macOS, settings are saved
+automatically at
 `~/Library/Application Support/EchoLearn/echolearn_settings.json` when you
 change options, choose files, or close the app.
 
@@ -323,6 +345,7 @@ Initial public release.
 - PDF to MP3 conversion
 - Edge TTS integration
 - English and Spanish voice support
+- Automatic language detection for normal PDFs
 - Automatic language switching using [EN] and [ES]
 - Real pause generation using FFmpeg
 - Adjustable speech rate and volume
