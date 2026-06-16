@@ -42,6 +42,8 @@ DEFAULT_LEARNING_PAUSES_ENABLED = True
 DEFAULT_LEARNING_PAUSE_SECONDS = 2
 DEFAULT_UNTAGGED_LANGUAGE = "EN"
 DEFAULT_AUTO_DETECT_LANGUAGE = True
+DEFAULT_AUTO_LEARNING_PAUSES_ENABLED = False
+DEFAULT_AUTO_PAUSE_SECONDS = 3
 RATE_OPTIONS = {
     "Very Slow": -50,
     "Slow": -25,
@@ -56,10 +58,18 @@ VOLUME_OPTIONS = {
     "High": 25,
     "Very High": 50,
 }
+AUTO_PAUSE_OPTIONS = {
+    "1 second": 1,
+    "2 seconds": 2,
+    "3 seconds": 3,
+    "5 seconds": 5,
+    "8 seconds": 8,
+}
 SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?;:])\s+")
+SENTENCE_ENDING_PUNCTUATION = ".!?:;"
 SPANISH_CHARACTER_PATTERN = re.compile(r"[áéíóúüñÁÉÍÓÚÜÑ¿¡]")
 WORD_PATTERN = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ']+")
 SPANISH_WORDS = {
@@ -127,6 +137,7 @@ SPANISH_WORDS = {
     "y",
     "yo",
 }
+STRONG_SPANISH_WORDS = {"gracias", "hola"}
 ENGLISH_WORDS = {
     "a",
     "about",
@@ -281,6 +292,8 @@ class ConversionSettings:
     learning_pause_seconds: int
     auto_detect_language: bool
     default_untagged_language: str
+    auto_learning_pauses: bool
+    auto_pause_seconds: int
 
 
 @dataclass(frozen=True)
@@ -304,6 +317,8 @@ class ScriptSegment:
     language_source: str = "default"
     detection_confident: bool = True
     detection_score: int = 0
+    auto_pause_after: bool = True
+    raw_text_unit: str = ""
 
 
 @dataclass(frozen=True)
@@ -379,54 +394,120 @@ def extract_text_from_pdf(
     return full_text
 
 
+def has_sentence_ending(text: str) -> bool:
+    """Return True when text ends with sentence boundary punctuation."""
+
+    return text.rstrip().endswith(tuple(SENTENCE_ENDING_PUNCTUATION))
+
+
+def first_text_character(text: str) -> str:
+    """Return the first non-space character, if present."""
+
+    stripped_text = text.strip()
+    return stripped_text[0] if stripped_text else ""
+
+
+def looks_like_heading(line: str, next_line: str | None = None) -> bool:
+    """Return True for short standalone title-like lines."""
+
+    normalized_line = normalize_text(line)
+    if not normalized_line or has_sentence_ending(normalized_line):
+        return False
+
+    words = WORD_PATTERN.findall(normalized_line)
+    if not words or len(words) > 10:
+        return False
+
+    title_case_words = [word for word in words if word[0].isupper()]
+    next_character = first_text_character(next_line or "")
+    return len(title_case_words) == len(words) or next_character.isupper()
+
+
 def split_sentences(text: str) -> list[str]:
     """Split text into sentence-sized units while preserving order."""
 
+    sentence_text = re.sub(r"[ \t]*\n+[ \t]*", " ", normalize_text(text))
     sentences = [
         normalize_text(sentence)
-        for sentence in SENTENCE_SPLIT_PATTERN.split(text)
+        for sentence in SENTENCE_SPLIT_PATTERN.split(sentence_text)
         if normalize_text(sentence)
     ]
-    return sentences or [normalize_text(text)]
+    return sentences or [sentence_text]
 
 
-def split_untagged_lines(raw_text: str) -> list[str]:
-    """Split normal PDF text into non-empty line units before detection."""
+def split_untagged_text_units(raw_text: str) -> list[tuple[str, str]]:
+    """Build final heading/sentence units before language detection."""
 
     cleaned_text = normalize_text(raw_text)
     if not cleaned_text or TAG_ONLY_PATTERN.fullmatch(cleaned_text):
         return []
 
-    return [
-        normalized_line
-        for line in cleaned_text.splitlines()
-        if (normalized_line := normalize_text(line))
+    units: list[tuple[str, str]] = []
+    paragraphs = [
+        paragraph
+        for paragraph in re.split(r"\n\s*\n", cleaned_text)
+        if normalize_text(paragraph)
     ]
+    for paragraph in paragraphs:
+        lines = [
+            normalized_line
+            for line in paragraph.splitlines()
+            if (normalized_line := normalize_text(line))
+        ]
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            next_line = lines[index + 1] if index + 1 < len(lines) else None
+            if looks_like_heading(line, next_line):
+                units.append((line, "heading"))
+                index += 1
+                continue
+
+            merged_line = line
+            index += 1
+            while index < len(lines) and not has_sentence_ending(merged_line):
+                candidate_line = lines[index]
+                following_line = lines[index + 1] if index + 1 < len(lines) else None
+                if looks_like_heading(candidate_line, following_line):
+                    break
+                merged_line = normalize_text(f"{merged_line} {candidate_line}")
+                index += 1
+
+            for sentence in split_sentences(merged_line):
+                units.append((sentence, "sentence"))
+
+    return units
 
 
-def split_line_for_detection(line_text: str) -> list[str]:
-    """Keep each non-empty line as its own detection unit."""
-
-    return [line_text]
-
-
-def format_language_detection_debug(text: str, language: str) -> str:
+def format_language_detection_debug(segment: ScriptSegment) -> str:
     """Return the exact debug block for one language detection unit."""
 
-    return f"LANG UNIT:\n{text}\nDETECTED:\n{language}\n"
+    auto_pause = "yes" if segment.auto_pause_after else "no"
+    return (
+        f"RAW TEXT UNIT:\n{segment.raw_text_unit}\n"
+        f"FINAL SEGMENT:\n{segment.text}\n"
+        f"LANGUAGE:\n{segment.language}\n"
+        f"SOURCE:\n{segment.language_source}\n"
+        f"AUTO PAUSE:\n{auto_pause}\n"
+    )
 
 
 def log_language_detection_unit(
     debug_entries: list[str],
     *,
-    text: str,
-    language: str,
+    segment: ScriptSegment,
 ) -> None:
     """Print and collect language detection debug output."""
 
-    debug_entry = format_language_detection_debug(text, language)
+    debug_entry = format_language_detection_debug(segment)
     print(debug_entry, end="")
     debug_entries.append(debug_entry)
+
+
+def log_sentence_detected(sentence: str) -> None:
+    """Print the sentence unit used for detection and auto pauses."""
+
+    print(f"SENTENCE DETECTED:\n{sentence}")
 
 
 def language_name(language: str) -> str:
@@ -451,6 +532,8 @@ def detect_language_for_text(
     words = [word.lower() for word in WORD_PATTERN.findall(normalized_text)]
     spanish_score = sum(1 for word in words if word in SPANISH_WORDS)
     english_score = sum(1 for word in words if word in ENGLISH_WORDS)
+    if any(word in STRONG_SPANISH_WORDS for word in words):
+        spanish_score += 2
 
     if SPANISH_CHARACTER_PATTERN.search(normalized_text):
         spanish_score += 3
@@ -571,21 +654,79 @@ def should_warn_about_uncertain_detection(segments: list[ScriptSegment]) -> bool
     )
 
 
+def should_insert_auto_pause_after_segment(
+    segments: list[ScriptSegment],
+    index: int,
+    *,
+    auto_learning_pauses_enabled: bool,
+) -> bool:
+    """Return True when an automatic pause should follow a parsed segment."""
+
+    if not auto_learning_pauses_enabled:
+        return False
+
+    segment = segments[index]
+    next_segment = segments[index + 1] if index + 1 < len(segments) else None
+    return (
+        segment.kind == "text"
+        and segment.language_source != "explicit tag"
+        and segment.auto_pause_after
+        and next_segment is not None
+        and next_segment.kind != "pause"
+    )
+
+
+def build_language_detection_debug_entries(
+    segments: list[ScriptSegment],
+    *,
+    auto_learning_pauses_enabled: bool,
+) -> list[str]:
+    """Build debug blocks after final segment boundaries are known."""
+
+    debug_entries: list[str] = []
+    for index, segment in enumerate(segments):
+        if segment.kind != "text":
+            continue
+        debug_segment = ScriptSegment(
+            kind=segment.kind,
+            text=segment.text,
+            language=segment.language,
+            seconds=segment.seconds,
+            language_source=segment.language_source,
+            detection_confident=segment.detection_confident,
+            detection_score=segment.detection_score,
+            auto_pause_after=should_insert_auto_pause_after_segment(
+                segments,
+                index,
+                auto_learning_pauses_enabled=auto_learning_pauses_enabled,
+            ),
+            raw_text_unit=segment.raw_text_unit,
+        )
+        debug_entries.append(format_language_detection_debug(debug_segment))
+
+    return debug_entries
+
+
 def parse_audio_script(
     text: str,
     *,
     auto_detect_language: bool = DEFAULT_AUTO_DETECT_LANGUAGE,
     default_language: str = DEFAULT_UNTAGGED_LANGUAGE,
     language_debug_path: Path = LANGUAGE_DETECTION_DEBUG_FILE,
+    auto_learning_pauses_enabled: bool = False,
 ) -> tuple[list[ScriptSegment], list[str]]:
     """Turn PDF text, tags, and auto language detection into audio requests."""
 
     segments: list[ScriptSegment] = []
     warnings: list[str] = []
-    language_debug_entries: list[str] = []
     current_language = "EN"
     language_explicit_active = False
     position = 0
+
+    def append_text_segment(segment: ScriptSegment) -> None:
+        if segments and segments[-1].kind == "text" and segments[-1].text == segment.text:
+            return
+        segments.append(segment)
 
     def add_text_segment(raw_text: str, *, explicit_language: bool) -> None:
         cleaned_text = normalize_text(raw_text)
@@ -598,43 +739,36 @@ def parse_audio_script(
                     text=cleaned_text,
                     language=current_language,
                     language_source="explicit tag",
+                    auto_pause_after=False,
+                    raw_text_unit=cleaned_text,
                 )
-                log_language_detection_unit(
-                    language_debug_entries,
-                    text=segment.text,
-                    language=segment.language,
-                )
-                segments.append(segment)
+                append_text_segment(segment)
                 return
 
-            for line_text in split_untagged_lines(cleaned_text):
-                for segment_text in split_line_for_detection(line_text):
-                    detected_parts = split_mixed_language_text(
-                        segment_text,
-                        default_language=default_language,
-                        auto_detect_language=auto_detect_language,
-                    )
-                    for (
-                        part_text,
-                        language,
-                        source,
-                        confident,
-                        score,
-                    ) in detected_parts:
-                        segment = ScriptSegment(
-                            kind="text",
-                            text=part_text,
-                            language=language,
-                            language_source=source,
-                            detection_confident=confident,
-                            detection_score=score,
-                        )
-                        log_language_detection_unit(
-                            language_debug_entries,
-                            text=segment.text,
-                            language=segment.language,
-                        )
-                        segments.append(segment)
+            for raw_text_unit, unit_source in split_untagged_text_units(cleaned_text):
+                log_sentence_detected(raw_text_unit)
+                language, detection_source, confident, score = detect_language_for_text(
+                    raw_text_unit,
+                    default_language=default_language,
+                    auto_detect_language=auto_detect_language,
+                )
+                if unit_source == "heading":
+                    segment_source = "heading"
+                elif detection_source == "default":
+                    segment_source = "default"
+                else:
+                    segment_source = "sentence"
+                segment = ScriptSegment(
+                    kind="text",
+                    text=raw_text_unit,
+                    language=language,
+                    language_source=segment_source,
+                    detection_confident=confident,
+                    detection_score=score,
+                    auto_pause_after=True,
+                    raw_text_unit=raw_text_unit,
+                )
+                append_text_segment(segment)
 
     for match in TAG_PATTERN.finditer(text):
         add_text_segment(
@@ -662,7 +796,10 @@ def parse_audio_script(
         warnings.append(UNCERTAIN_DETECTION_WARNING)
     try:
         write_language_detection_debug(
-            language_debug_entries,
+            build_language_detection_debug_entries(
+                segments,
+                auto_learning_pauses_enabled=auto_learning_pauses_enabled,
+            ),
             language_debug_path,
         )
     except OSError:
@@ -733,6 +870,33 @@ def add_idiom_repeats(
         index += 1
 
     return idiom_segments
+
+
+def add_auto_learning_pauses(
+    segments: list[ScriptSegment],
+    *,
+    auto_pause_seconds: int,
+) -> list[ScriptSegment]:
+    """Insert thinking pauses after untagged learning text segments."""
+
+    paused_segments: list[ScriptSegment] = []
+    for index, segment in enumerate(segments, start=1):
+        paused_segments.append(segment)
+        if should_insert_auto_pause_after_segment(
+            segments,
+            index - 1,
+            auto_learning_pauses_enabled=True,
+        ):
+            paused_segments.append(
+                ScriptSegment(kind="pause", seconds=auto_pause_seconds)
+            )
+            print(
+                f"Auto pause inserted: {auto_pause_seconds} seconds "
+                f"after segment {index}"
+            )
+            print(f"AUTO PAUSE:\n{auto_pause_seconds} seconds")
+
+    return paused_segments
 
 
 def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> None:
@@ -1374,6 +1538,11 @@ class PDFAudiobookApp(tk.Tk):
         self.idioms_mode = tk.BooleanVar(value=False)
         self.learning_pauses = tk.BooleanVar(value=DEFAULT_LEARNING_PAUSES_ENABLED)
         self.learning_pause_seconds = tk.IntVar(value=DEFAULT_LEARNING_PAUSE_SECONDS)
+        self.auto_learning_pauses = tk.BooleanVar(
+            value=DEFAULT_AUTO_LEARNING_PAUSES_ENABLED
+        )
+        self.selected_auto_pause_label = tk.StringVar(value="3 seconds")
+        self.auto_pause_seconds = tk.IntVar(value=DEFAULT_AUTO_PAUSE_SECONDS)
         self.auto_detect_language = tk.BooleanVar(value=DEFAULT_AUTO_DETECT_LANGUAGE)
         self.default_untagged_language = tk.StringVar(
             value=language_name(DEFAULT_UNTAGGED_LANGUAGE)
@@ -1739,6 +1908,31 @@ class PDFAudiobookApp(tk.Tk):
             row=6, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
         )
 
+        ToggleSwitch(
+            self.learning_card,
+            text="Auto Learning Pauses",
+            variable=self.auto_learning_pauses,
+            background="#191c24",
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(12, 0))
+
+        ttk.Label(self.learning_card, text="Auto pause duration").grid(
+            row=8, column=0, sticky="w", pady=(10, 0)
+        )
+        self.auto_pause_menu = ttk.Combobox(
+            self.learning_card,
+            textvariable=self.selected_auto_pause_label,
+            state="readonly",
+            values=list(AUTO_PAUSE_OPTIONS),
+            width=10,
+        )
+        self.auto_pause_menu.grid(
+            row=8, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
+        )
+        self.auto_pause_menu.bind(
+            "<<ComboboxSelected>>",
+            self._update_auto_pause_from_label,
+        )
+
         self.conversion_card = self._create_card(content)
         self.conversion_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
         self.conversion_card.columnconfigure(0, weight=1)
@@ -2019,6 +2213,27 @@ class PDFAudiobookApp(tk.Tk):
                 pause_seconds_value = DEFAULT_LEARNING_PAUSE_SECONDS
             if pause_seconds_value in {1, 2, 3, 5}:
                 self.learning_pause_seconds.set(pause_seconds_value)
+            self.auto_learning_pauses.set(
+                bool(
+                    settings.get(
+                        "auto_learning_pauses",
+                        DEFAULT_AUTO_LEARNING_PAUSES_ENABLED,
+                    )
+                )
+            )
+            auto_pause_seconds = settings.get(
+                "auto_pause_seconds",
+                DEFAULT_AUTO_PAUSE_SECONDS,
+            )
+            try:
+                auto_pause_seconds_value = int(auto_pause_seconds)
+            except (TypeError, ValueError):
+                auto_pause_seconds_value = DEFAULT_AUTO_PAUSE_SECONDS
+            if auto_pause_seconds_value in AUTO_PAUSE_OPTIONS.values():
+                self.auto_pause_seconds.set(auto_pause_seconds_value)
+                self.selected_auto_pause_label.set(
+                    self._auto_pause_label_for_seconds(auto_pause_seconds_value)
+                )
             self.auto_detect_language.set(
                 bool(
                     settings.get(
@@ -2060,6 +2275,9 @@ class PDFAudiobookApp(tk.Tk):
             self.idioms_mode,
             self.learning_pauses,
             self.learning_pause_seconds,
+            self.auto_learning_pauses,
+            self.selected_auto_pause_label,
+            self.auto_pause_seconds,
             self.auto_detect_language,
             self.default_untagged_language,
             self.open_audio_when_finished,
@@ -2079,6 +2297,8 @@ class PDFAudiobookApp(tk.Tk):
             "idioms_mode": bool(self.idioms_mode.get()),
             "learning_pauses": bool(self.learning_pauses.get()),
             "learning_pause_seconds": int(self.learning_pause_seconds.get()),
+            "auto_learning_pauses": bool(self.auto_learning_pauses.get()),
+            "auto_pause_seconds": int(self.auto_pause_seconds.get()),
             "auto_detect_language": bool(self.auto_detect_language.get()),
             "default_untagged_language": self._default_untagged_language_code(),
             "open_audio_when_finished": bool(self.open_audio_when_finished.get()),
@@ -2339,6 +2559,8 @@ class PDFAudiobookApp(tk.Tk):
             learning_pause_seconds=int(self.learning_pause_seconds.get()),
             auto_detect_language=bool(self.auto_detect_language.get()),
             default_untagged_language=self._default_untagged_language_code(),
+            auto_learning_pauses=bool(self.auto_learning_pauses.get()),
+            auto_pause_seconds=int(self.auto_pause_seconds.get()),
         )
 
     def _default_untagged_language_code(self) -> str:
@@ -2389,6 +2611,25 @@ class PDFAudiobookApp(tk.Tk):
             VOLUME_OPTIONS.get(self.selected_volume_label.get(), DEFAULT_VOLUME)
         )
 
+    def _update_auto_pause_from_label(self, _event: tk.Event | None = None) -> None:
+        """Map the selected auto-pause label to seconds."""
+
+        self.auto_pause_seconds.set(
+            AUTO_PAUSE_OPTIONS.get(
+                self.selected_auto_pause_label.get(),
+                DEFAULT_AUTO_PAUSE_SECONDS,
+            )
+        )
+
+    @staticmethod
+    def _auto_pause_label_for_seconds(seconds: int) -> str:
+        """Return the dropdown label for an auto-pause duration."""
+
+        for label, value in AUTO_PAUSE_OPTIONS.items():
+            if value == seconds:
+                return label
+        return "3 seconds"
+
     def _set_progress(self, percent: float) -> None:
         """Update progress value and percentage label together."""
 
@@ -2429,7 +2670,19 @@ class PDFAudiobookApp(tk.Tk):
                 text,
                 auto_detect_language=settings.auto_detect_language,
                 default_language=settings.default_untagged_language,
+                auto_learning_pauses_enabled=(
+                    settings.auto_learning_pauses and not settings.idioms_mode
+                ),
             )
+            print(
+                "Auto Learning Pauses: "
+                f"{'ON' if settings.auto_learning_pauses else 'OFF'}"
+            )
+            if settings.auto_learning_pauses and not settings.idioms_mode:
+                segments = add_auto_learning_pauses(
+                    segments,
+                    auto_pause_seconds=settings.auto_pause_seconds,
+                )
             print(f"Idioms Mode: {'ON' if settings.idioms_mode else 'OFF'}")
             if settings.idioms_mode:
                 segments = add_idiom_repeats(

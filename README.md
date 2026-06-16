@@ -22,6 +22,7 @@ voice control and timed pauses.
 - Shadowing Mode for automatic English phrase repetition
 - Idioms Mode for English-Spanish-English learning patterns
 - Learning Pauses for timed practice gaps in Idioms Mode
+- Auto Learning Pauses for normal PDFs without pause tags
 - Modern dark interface with toggle switches
 - Official EchoLearn logo in the app header
 - Clickable PDF selection area with Browse PDF fallback
@@ -131,11 +132,12 @@ If Finder still shows an old icon after rebuilding, delete the previous
 4. Select an English voice and a Spanish voice.
 5. Leave **Auto-detect language** on for normal PDFs, or choose the default
    language for untagged text.
-6. Adjust speech rate and volume.
-7. Optionally enable **Shadowing Mode** for English pronunciation practice.
-8. Click **Convert to MP3**.
-9. Follow the progress percentage, current page, and current segment updates.
-10. Use **Open Audio** or **Reveal MP3** after conversion, or enable **Open audio automatically when finished**.
+6. Optionally enable **Auto Learning Pauses** and choose an auto pause duration.
+7. Adjust speech rate and volume.
+8. Optionally enable **Shadowing Mode** for English pronunciation practice.
+9. Click **Convert to MP3**.
+10. Follow the progress percentage, current page, and current segment updates.
+11. Use **Open Audio** or **Reveal MP3** after conversion, or enable **Open audio automatically when finished**.
 
 ## Interface
 
@@ -232,6 +234,19 @@ is on, EchoLearn shows a friendly warning after conversion.
 Unsupported pause tags, such as `[PAUSE_4]`, are ignored and shown as a friendly
 warning after conversion.
 
+## Auto Learning Pauses
+
+Enable **Auto Learning Pauses** to add thinking time between normal untagged PDF
+segments without adding `[PAUSE_X]` tags to the document. EchoLearn detects each
+complete sentence, chooses the English or Spanish voice, then inserts the
+selected pause duration after that sentence when another speech segment follows.
+Wrapped PDF lines that belong to the same sentence are merged before detection.
+
+The **Auto pause duration** selector supports 1, 2, 3, 5, and 8 seconds. The
+default is 3 seconds. Manual pause tags still work and take priority, so a
+`[PAUSE_5]` tag produces exactly a 5 second pause without an extra automatic
+pause next to it.
+
 ## Shadowing Mode
 
 Enable **Shadowing Mode** in the app to automatically repeat each English phrase.
@@ -289,8 +304,8 @@ currently selected English and Spanish voices before generating a full audiobook
 ## Saved Settings
 
 EchoLearn remembers your last selected voices, language detection options,
-learning modes, folders, speech rate, and volume. On macOS, settings are saved
-automatically at
+learning modes, auto pause settings, folders, speech rate, and volume. On macOS,
+settings are saved automatically at
 `~/Library/Application Support/EchoLearn/echolearn_settings.json` when you
 change options, choose files, or close the app.
 
@@ -346,6 +361,7 @@ Initial public release.
 - Edge TTS integration
 - English and Spanish voice support
 - Automatic language detection for normal PDFs
+- Auto Learning Pauses for normal PDFs without pause tags
 - Automatic language switching using [EN] and [ES]
 - Real pause generation using FFmpeg
 - Adjustable speech rate and volume
