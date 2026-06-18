@@ -201,6 +201,18 @@ Tags are still supported for advanced control. Add tags directly in your PDF
 text when you want to force a specific voice or add timed pauses. `[EN]` and
 `[ES]` always override automatic detection.
 
+## EchoLearn Markup Language
+
+Structured content can use EchoLearn Markup Language tags like `[TITLE]`,
+`[FLOW]`, `[DIALOG]`, and `[PRACTICE]` to give EchoLearn more precise control
+over lesson structure before audio generation. Existing `[EN]`, `[ES]`, and
+`[PAUSE_X]` tags remain supported for voice selection and exact timed pauses.
+Future markup support will include multi-speaker dialogues with tags like
+`[SPEAKER_1]` and `[SPEAKER_2]` so conversations can use different assigned
+voices.
+
+See `docs/echolearn_markup_language_v1.md` for the v1 markup documentation.
+
 Use `[EN]` before English text:
 
 ```text
