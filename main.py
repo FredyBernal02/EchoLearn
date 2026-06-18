@@ -20,8 +20,9 @@ import threading
 import time
 import tkinter as tk
 import traceback
+import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
@@ -41,6 +42,7 @@ DEFAULT_UNTAGGED_LANGUAGE = "EN"
 DEFAULT_AUTO_DETECT_LANGUAGE = True
 DEFAULT_AUTO_LEARNING_PAUSES_ENABLED = False
 DEFAULT_AUTO_PAUSE_SECONDS = 3
+DEFAULT_AUTO_PAUSE_SEGMENTATION = "paragraph"
 RATE_OPTIONS = {
     "Very Slow": -50,
     "Slow": -25,
@@ -62,21 +64,29 @@ AUTO_PAUSE_OPTIONS = {
     "5 seconds": 5,
     "8 seconds": 8,
 }
+AUTO_PAUSE_SEGMENTATION_OPTIONS = {
+    "Paragraph": "paragraph",
+    "Sentence": "sentence",
+}
 SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
-SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?;:])\s+")
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 SENTENCE_ENDING_PUNCTUATION = ".!?:;"
 SPANISH_CHARACTER_PATTERN = re.compile(r"[áéíóúüñÁÉÍÓÚÜÑ¿¡]")
 WORD_PATTERN = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ']+")
 SPANISH_WORDS = {
-    "a",
     "al",
     "algo",
     "abandonan",
     "ahora",
+    "atencion",
+    "atención",
+    "bien",
     "como",
     "con",
+    "conversacion",
+    "conversación",
     "cuando",
     "de",
     "del",
@@ -93,52 +103,158 @@ SPANISH_WORDS = {
     "este",
     "estos",
     "estoy",
+    "excelente",
+    "expresion",
+    "expresión",
     "fue",
     "gracias",
     "hay",
     "hola",
     "idioma",
+    "ingles",
+    "inglés",
+    "instruccion",
+    "instrucción",
+    "intenta",
     "la",
     "las",
+    "leccion",
+    "lección",
     "lo",
     "los",
     "mas",
-    "me",
     "mi",
     "mis",
     "muchas",
     "muy",
-    "no",
+    "nivel",
     "nos",
     "objetivo",
-    "o",
     "para",
     "personas",
     "pero",
     "por",
     "porque",
+    "practica",
+    "práctica",
     "pronto",
     "propio",
     "que",
-    "se",
-    "si",
+    "repite",
+    "escucha",
+    "significa",
     "sin",
+    "responder",
     "su",
     "sus",
     "tambien",
+    "también",
     "te",
     "tiene",
+    "todavia",
+    "todavía",
     "tu",
     "un",
     "una",
+    "uno",
+    "voz",
     "y",
     "yo",
 }
-STRONG_SPANISH_WORDS = {"gracias", "hola"}
+STRONG_SPANISH_WORDS = {
+    "atencion",
+    "atención",
+    "bien",
+    "conversacion",
+    "conversación",
+    "escucha",
+    "excelente",
+    "expresion",
+    "expresión",
+    "gracias",
+    "hola",
+    "ingles",
+    "inglés",
+    "instruccion",
+    "instrucción",
+    "intenta",
+    "leccion",
+    "lección",
+    "nivel",
+    "practica",
+    "práctica",
+    "repite",
+    "responder",
+    "significa",
+    "todavia",
+    "todavía",
+}
+STANDALONE_INSTRUCTION_LINES = {
+    "ahora escucha",
+    "escucha y repite",
+    "excelente",
+    "muy bien",
+    "repite",
+}
+HEADING_KEYWORDS = {
+    "capitulo",
+    "echolearn",
+    "leccion",
+    "nivel",
+    "unidad",
+}
+WRAP_CONTINUATION_WORDS = {
+    "a",
+    "al",
+    "and",
+    "between",
+    "con",
+    "de",
+    "del",
+    "en",
+    "for",
+    "in",
+    "of",
+    "para",
+    "que",
+    "the",
+    "to",
+    "with",
+    "y",
+}
+PRACTICE_MODE_TRIGGER_PHRASES = {
+    "answer before you hear",
+    "ahora escucha y repite",
+    "como dirias",
+    "despues de cada instruccion",
+    "escucha y repite",
+    "intenta responder",
+    "listen and repeat",
+    "practice",
+    "practica",
+    "repeat",
+    "repite",
+    "repite en voz alta",
+    "say it out loud",
+    "try to answer",
+}
+PRACTICE_MODE_EXIT_PHRASES = {
+    "ahora escucha la conversacion completa",
+    "ahora vamos a aprender",
+    "eso es todo por hoy",
+    "excellent",
+    "excelente",
+    "hasta la proxima leccion",
+    "muy bien",
+    "now listen to the full conversation",
+    "that is all for today",
+    "very good",
+}
 ENGLISH_WORDS = {
     "a",
     "about",
     "and",
+    "answer",
     "are",
     "as",
     "at",
@@ -147,6 +263,8 @@ ENGLISH_WORDS = {
     "but",
     "can",
     "do",
+    "english",
+    "excuse",
     "for",
     "from",
     "have",
@@ -158,6 +276,7 @@ ENGLISH_WORDS = {
     "in",
     "is",
     "it",
+    "listen",
     "me",
     "my",
     "not",
@@ -166,8 +285,11 @@ ENGLISH_WORDS = {
     "or",
     "our",
     "practice",
+    "repeat",
+    "say",
     "she",
     "so",
+    "speak",
     "that",
     "the",
     "their",
@@ -176,6 +298,7 @@ ENGLISH_WORDS = {
     "this",
     "today",
     "to",
+    "try",
     "going",
     "was",
     "we",
@@ -200,6 +323,7 @@ LOGS_DIR = APP_DATA_DIR / "logs"
 DEBUG_SEGMENTS_FILE = LOGS_DIR / "debug_segments.txt"
 DEBUG_NORMALIZED_TEXT_FILE = LOGS_DIR / "debug_normalized_text.txt"
 LANGUAGE_DETECTION_DEBUG_FILE = LOGS_DIR / "language_detection_debug.txt"
+SMART_CLEANUP_DEBUG_FILE = LOGS_DIR / "smart_cleanup_debug.txt"
 SETTINGS_FILE = APP_DATA_DIR / "echolearn_settings.json"
 FFMPEG_NOT_FOUND_MESSAGE = (
     "FFmpeg was not found.\n"
@@ -287,6 +411,7 @@ class ConversionSettings:
     default_untagged_language: str
     auto_learning_pauses: bool
     auto_pause_seconds: int
+    auto_pause_segmentation: str
 
 
 @dataclass(frozen=True)
@@ -312,6 +437,17 @@ class ScriptSegment:
     detection_score: int = 0
     auto_pause_after: bool = True
     raw_text_unit: str = ""
+    practice_mode: bool = False
+    practice_trigger: str = ""
+    practice_pause_inserted: bool = False
+
+
+@dataclass(frozen=True)
+class SmartCleanupRecord:
+    """Mapping from extracted PDF lines to the cleaned segment EchoLearn uses."""
+
+    raw_line: str
+    cleaned_segment: str
 
 
 @dataclass(frozen=True)
@@ -344,6 +480,41 @@ def normalize_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def normalized_line_key(line: str) -> str:
+    """Return a normalized key for exact short-line cleanup rules."""
+
+    return normalize_text(line).lower().rstrip(".!?:;")
+
+
+def normalized_phrase_text(text: str) -> str:
+    """Return accent-insensitive text for phrase matching."""
+
+    decomposed = unicodedata.normalize("NFKD", normalize_text(text).lower())
+    without_accents = "".join(
+        character
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    return re.sub(r"[^a-z0-9']+", " ", without_accents).strip()
+
+
+def matching_phrase(text: str, phrases: set[str]) -> str:
+    """Return the first configured phrase found in text."""
+
+    normalized_text = f" {normalized_phrase_text(text)} "
+    for phrase in sorted(phrases, key=len, reverse=True):
+        normalized_phrase = normalized_phrase_text(phrase)
+        if f" {normalized_phrase} " in normalized_text:
+            return phrase
+    return ""
+
+
+def is_standalone_instruction_line(line: str) -> bool:
+    """Return True for short instruction prompts that should not be merged."""
+
+    return normalized_line_key(line) in STANDALONE_INSTRUCTION_LINES
 
 
 def extract_text_from_pdf(
@@ -404,16 +575,210 @@ def looks_like_heading(line: str, next_line: str | None = None) -> bool:
     """Return True for short standalone title-like lines."""
 
     normalized_line = normalize_text(line)
-    if not normalized_line or has_sentence_ending(normalized_line):
+    if (
+        not normalized_line
+        or has_sentence_ending(normalized_line)
+        or is_standalone_instruction_line(normalized_line)
+    ):
         return False
 
     words = WORD_PATTERN.findall(normalized_line)
-    if not words or len(words) > 10:
+    if not words or len(words) > 12:
         return False
+
+    lower_words = {word.lower() for word in words}
+    has_heading_keyword = bool(lower_words & HEADING_KEYWORDS)
+    if has_heading_keyword and ("-" in normalized_line or len(words) <= 6):
+        return True
 
     title_case_words = [word for word in words if word[0].isupper()]
     next_character = first_text_character(next_line or "")
-    return len(title_case_words) == len(words) or next_character.isupper()
+    return len(title_case_words) == len(words) or (
+        has_heading_keyword and next_character.isupper()
+    )
+
+
+def looks_like_short_english_dialogue_line(line: str) -> bool:
+    """Return True for compact English dialogue lines that should stand alone."""
+
+    cleaned_line = normalize_text(line)
+    if not cleaned_line or not cleaned_line.endswith((".", "?", "!")):
+        return False
+
+    words = [word.lower() for word in WORD_PATTERN.findall(cleaned_line)]
+    if not words or len(words) > 8:
+        return False
+
+    english_score = sum(1 for word in words if word in ENGLISH_WORDS)
+    spanish_score = sum(1 for word in words if word in SPANISH_WORDS)
+    if spanish_score > english_score or english_score == 0:
+        return False
+
+    conversational_starters = {
+        "are",
+        "can",
+        "could",
+        "do",
+        "does",
+        "excuse",
+        "hello",
+        "hey",
+        "hi",
+        "how",
+        "i",
+        "is",
+        "may",
+        "please",
+        "thank",
+        "thanks",
+        "what",
+        "where",
+        "would",
+        "you",
+    }
+    return cleaned_line.endswith("?") or words[0] in conversational_starters
+
+
+def should_merge_wrapped_lines(
+    current_line: str,
+    next_line: str,
+    following_line: str | None = None,
+) -> bool:
+    """Return True when adjacent extracted PDF lines are one wrapped sentence."""
+
+    current_line = normalize_text(current_line)
+    next_line = normalize_text(next_line)
+    if (
+        not current_line
+        or not next_line
+        or has_sentence_ending(current_line)
+        or TAG_ONLY_PATTERN.fullmatch(current_line)
+        or TAG_ONLY_PATTERN.fullmatch(next_line)
+        or is_standalone_instruction_line(current_line)
+        or is_standalone_instruction_line(next_line)
+        or looks_like_heading(current_line, next_line)
+        or looks_like_heading(next_line, following_line)
+    ):
+        return False
+
+    next_character = first_text_character(next_line)
+    if next_character and next_character.islower():
+        return True
+
+    current_words = [word.lower() for word in WORD_PATTERN.findall(current_line)]
+    next_words = WORD_PATTERN.findall(next_line)
+    if current_words and current_words[-1] in WRAP_CONTINUATION_WORDS:
+        return True
+
+    if len(current_line) >= 55 and next_words and len(next_words) <= 4:
+        return True
+
+    return len(current_line) >= 55 and bool(next_character) and not next_character.isupper()
+
+
+def add_missing_sentence_punctuation(text: str, *, standalone: bool) -> str:
+    """Add a period to sentence-like cleanup units without changing headings."""
+
+    cleaned_text = normalize_text(text)
+    if standalone or not cleaned_text or has_sentence_ending(cleaned_text):
+        return cleaned_text
+    if TAG_ONLY_PATTERN.fullmatch(cleaned_text):
+        return cleaned_text
+    return f"{cleaned_text}."
+
+
+def smart_pdf_cleanup_span(
+    span_text: str,
+) -> tuple[list[list[str]], list[SmartCleanupRecord]]:
+    """Repair wrapped PDF lines inside text that does not contain manual tags."""
+
+    cleaned_paragraphs: list[list[str]] = []
+    records: list[SmartCleanupRecord] = []
+    normalized_span = normalize_text(span_text)
+    paragraphs = [
+        paragraph
+        for paragraph in re.split(r"\n\s*\n", normalized_span)
+        if normalize_text(paragraph)
+    ]
+
+    for paragraph in paragraphs:
+        cleaned_segments: list[str] = []
+        lines = [
+            normalized_line
+            for line in paragraph.splitlines()
+            if (normalized_line := normalize_text(line))
+        ]
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            next_line = lines[index + 1] if index + 1 < len(lines) else None
+            if is_standalone_instruction_line(line):
+                segment = add_missing_sentence_punctuation(line, standalone=True)
+                cleaned_segments.append(segment)
+                records.append(SmartCleanupRecord(raw_line=line, cleaned_segment=segment))
+                index += 1
+                continue
+            if looks_like_heading(line, next_line):
+                cleaned_segments.append(line)
+                records.append(SmartCleanupRecord(raw_line=line, cleaned_segment=line))
+                index += 1
+                continue
+
+            raw_lines = [line]
+            merged_line = line
+            index += 1
+            while index < len(lines):
+                candidate_line = lines[index]
+                following_line = lines[index + 1] if index + 1 < len(lines) else None
+                if not should_merge_wrapped_lines(
+                    merged_line,
+                    candidate_line,
+                    following_line,
+                ):
+                    break
+                raw_lines.append(candidate_line)
+                merged_line = normalize_text(f"{merged_line} {candidate_line}")
+                index += 1
+
+            segment = add_missing_sentence_punctuation(merged_line, standalone=False)
+            cleaned_segments.append(segment)
+            records.append(
+                SmartCleanupRecord(
+                    raw_line="\n".join(raw_lines),
+                    cleaned_segment=segment,
+                )
+            )
+
+        if cleaned_segments:
+            cleaned_paragraphs.append(cleaned_segments)
+
+    return cleaned_paragraphs, records
+
+
+def smart_pdf_cleanup(text: str) -> tuple[str, list[SmartCleanupRecord]]:
+    """Clean extracted PDF lines before language detection and audio parsing."""
+
+    cleaned_parts: list[str] = []
+    cleanup_records: list[SmartCleanupRecord] = []
+    position = 0
+    for match in TAG_PATTERN.finditer(text):
+        span_paragraphs, span_records = smart_pdf_cleanup_span(text[position : match.start()])
+        cleaned_parts.extend(
+            "\n".join(paragraph_segments)
+            for paragraph_segments in span_paragraphs
+        )
+        cleanup_records.extend(span_records)
+        cleaned_parts.append(f"[{match.group(1).upper()}]")
+        position = match.end()
+
+    span_paragraphs, span_records = smart_pdf_cleanup_span(text[position:])
+    cleaned_parts.extend(
+        "\n".join(paragraph_segments)
+        for paragraph_segments in span_paragraphs
+    )
+    cleanup_records.extend(span_records)
+    cleaned_text = normalize_text("\n\n".join(part for part in cleaned_parts if part))
+    return cleaned_text, cleanup_records
 
 
 def split_sentences(text: str) -> list[str]:
@@ -428,13 +793,18 @@ def split_sentences(text: str) -> list[str]:
     return sentences or [sentence_text]
 
 
-def split_untagged_text_units(raw_text: str) -> list[tuple[str, str]]:
-    """Build final heading/sentence units before language detection."""
+def split_untagged_text_units(
+    raw_text: str,
+    *,
+    auto_pause_segmentation: str = DEFAULT_AUTO_PAUSE_SEGMENTATION,
+) -> list[tuple[str, str]]:
+    """Build final heading, sentence, or idea-block units before detection."""
 
     cleaned_text = normalize_text(raw_text)
     if not cleaned_text or TAG_ONLY_PATTERN.fullmatch(cleaned_text):
         return []
 
+    use_paragraph_blocks = auto_pause_segmentation == "paragraph"
     units: list[tuple[str, str]] = []
     paragraphs = [
         paragraph
@@ -447,27 +817,58 @@ def split_untagged_text_units(raw_text: str) -> list[tuple[str, str]]:
             for line in paragraph.splitlines()
             if (normalized_line := normalize_text(line))
         ]
+        block_lines: list[str] = []
+
+        def flush_paragraph_block() -> None:
+            if not block_lines:
+                return
+            block_text = normalize_text(" ".join(block_lines))
+            if block_text:
+                units.append((block_text, "paragraph"))
+            block_lines.clear()
+
         index = 0
         while index < len(lines):
             line = lines[index]
             next_line = lines[index + 1] if index + 1 < len(lines) else None
+            if is_standalone_instruction_line(line):
+                flush_paragraph_block()
+                units.append((line, "sentence"))
+                index += 1
+                continue
             if looks_like_heading(line, next_line):
+                flush_paragraph_block()
                 units.append((line, "heading"))
                 index += 1
                 continue
 
             merged_line = line
             index += 1
-            while index < len(lines) and not has_sentence_ending(merged_line):
+            while index < len(lines):
                 candidate_line = lines[index]
                 following_line = lines[index + 1] if index + 1 < len(lines) else None
-                if looks_like_heading(candidate_line, following_line):
+                if not should_merge_wrapped_lines(
+                    merged_line,
+                    candidate_line,
+                    following_line,
+                ):
                     break
                 merged_line = normalize_text(f"{merged_line} {candidate_line}")
                 index += 1
 
+            if use_paragraph_blocks and looks_like_short_english_dialogue_line(merged_line):
+                flush_paragraph_block()
+                units.append((merged_line, "sentence"))
+                continue
+
+            if use_paragraph_blocks:
+                block_lines.append(merged_line)
+                continue
+
             for sentence in split_sentences(merged_line):
                 units.append((sentence, "sentence"))
+
+        flush_paragraph_block()
 
     return units
 
@@ -534,7 +935,7 @@ def detect_language_for_text(
         spanish_score += 2
 
     score_delta = spanish_score - english_score
-    if score_delta >= 2:
+    if score_delta >= 1:
         return "ES", "auto-detect", True, score_delta
     if score_delta <= -2:
         return "EN", "auto-detect", True, abs(score_delta)
@@ -662,11 +1063,94 @@ def should_insert_auto_pause_after_segment(
     next_segment = segments[index + 1] if index + 1 < len(segments) else None
     return (
         segment.kind == "text"
-        and segment.language_source != "explicit tag"
-        and segment.auto_pause_after
+        and segment.practice_pause_inserted
         and next_segment is not None
         and next_segment.kind != "pause"
     )
+
+
+def annotate_practice_mode(
+    segments: list[ScriptSegment],
+    *,
+    auto_learning_pauses_enabled: bool,
+) -> list[ScriptSegment]:
+    """Mark final segments as Flow or Practice and record pause decisions."""
+
+    annotated_segments: list[ScriptSegment] = []
+    practice_mode = False
+    for index, segment in enumerate(segments):
+        if segment.kind != "text":
+            annotated_segments.append(segment)
+            continue
+
+        trigger = ""
+        if segment.language_source == "heading":
+            practice_mode = False
+            segment_practice_mode = False
+        else:
+            exit_phrase = matching_phrase(segment.text, PRACTICE_MODE_EXIT_PHRASES)
+            trigger_phrase = matching_phrase(segment.text, PRACTICE_MODE_TRIGGER_PHRASES)
+            if exit_phrase:
+                practice_mode = False
+                segment_practice_mode = False
+                trigger = f"exit: {exit_phrase}"
+            elif trigger_phrase:
+                practice_mode = True
+                segment_practice_mode = True
+                trigger = trigger_phrase
+            else:
+                segment_practice_mode = practice_mode
+
+        next_segment = segments[index + 1] if index + 1 < len(segments) else None
+        pause_inserted = (
+            auto_learning_pauses_enabled
+            and segment_practice_mode
+            and segment.auto_pause_after
+            and next_segment is not None
+            and next_segment.kind != "pause"
+        )
+        annotated_segments.append(
+            replace(
+                segment,
+                practice_mode=segment_practice_mode,
+                practice_trigger=trigger,
+                practice_pause_inserted=pause_inserted,
+            )
+        )
+
+    return annotated_segments
+
+
+def auto_pause_inserted_after_segments(segments: list[ScriptSegment]) -> list[int]:
+    """Return 1-based final segment numbers that should receive auto pauses."""
+
+    return [
+        index + 1
+        for index, _segment in enumerate(segments)
+        if should_insert_auto_pause_after_segment(
+            segments,
+            index,
+            auto_learning_pauses_enabled=True,
+        )
+    ]
+
+
+def auto_pause_inserted_after_text_segments(segments: list[ScriptSegment]) -> list[int]:
+    """Return 1-based text segment numbers that should receive auto pauses."""
+
+    inserted_after_text_segments: list[int] = []
+    text_segment_number = 0
+    for index, segment in enumerate(segments):
+        if segment.kind != "text":
+            continue
+        text_segment_number += 1
+        if should_insert_auto_pause_after_segment(
+            segments,
+            index,
+            auto_learning_pauses_enabled=True,
+        ):
+            inserted_after_text_segments.append(text_segment_number)
+    return inserted_after_text_segments
 
 
 def build_language_detection_debug_entries(
@@ -707,6 +1191,7 @@ def parse_audio_script(
     default_language: str = DEFAULT_UNTAGGED_LANGUAGE,
     language_debug_path: Path = LANGUAGE_DETECTION_DEBUG_FILE,
     auto_learning_pauses_enabled: bool = False,
+    auto_pause_segmentation: str = DEFAULT_AUTO_PAUSE_SEGMENTATION,
 ) -> tuple[list[ScriptSegment], list[str]]:
     """Turn PDF text, tags, and auto language detection into audio requests."""
 
@@ -738,7 +1223,10 @@ def parse_audio_script(
                 append_text_segment(segment)
                 return
 
-            for raw_text_unit, unit_source in split_untagged_text_units(cleaned_text):
+            for raw_text_unit, unit_source in split_untagged_text_units(
+                cleaned_text,
+                auto_pause_segmentation=auto_pause_segmentation,
+            ):
                 log_sentence_detected(raw_text_unit)
                 language, detection_source, confident, score = detect_language_for_text(
                     raw_text_unit,
@@ -747,6 +1235,8 @@ def parse_audio_script(
                 )
                 if unit_source == "heading":
                     segment_source = "heading"
+                elif unit_source == "paragraph":
+                    segment_source = "paragraph"
                 elif detection_source == "default":
                     segment_source = "default"
                 else:
@@ -785,6 +1275,10 @@ def parse_audio_script(
         position = match.end()
 
     add_text_segment(text[position:], explicit_language=language_explicit_active)
+    segments = annotate_practice_mode(
+        segments,
+        auto_learning_pauses_enabled=auto_learning_pauses_enabled,
+    )
     if auto_detect_language and should_warn_about_uncertain_detection(segments):
         warnings.append(UNCERTAIN_DETECTION_WARNING)
     try:
@@ -808,13 +1302,10 @@ def add_auto_learning_pauses(
     """Insert thinking pauses after untagged learning text segments."""
 
     paused_segments: list[ScriptSegment] = []
+    inserted_after_segments = set(auto_pause_inserted_after_segments(segments))
     for index, segment in enumerate(segments, start=1):
         paused_segments.append(segment)
-        if should_insert_auto_pause_after_segment(
-            segments,
-            index - 1,
-            auto_learning_pauses_enabled=True,
-        ):
+        if index in inserted_after_segments:
             paused_segments.append(
                 ScriptSegment(kind="pause", seconds=auto_pause_seconds)
             )
@@ -839,6 +1330,11 @@ def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> Non
             debug_file.write(f"language_source={segment.language_source}\n")
             debug_file.write(f"detection_confident={segment.detection_confident}\n")
             debug_file.write(f"detection_score={segment.detection_score}\n")
+            debug_file.write(f"practice_mode={segment.practice_mode}\n")
+            debug_file.write(f"practice_trigger={segment.practice_trigger!r}\n")
+            debug_file.write(
+                f"practice_pause_inserted={segment.practice_pause_inserted}\n"
+            )
             debug_file.write(f"seconds={segment.seconds}\n")
             debug_file.write(f"text={segment.text!r}\n")
             debug_file.write("\n")
@@ -849,6 +1345,40 @@ def write_language_detection_debug(debug_entries: list[str], debug_path: Path) -
 
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     debug_path.write_text("".join(debug_entries), encoding="utf-8")
+
+
+def write_smart_cleanup_debug(
+    cleanup_records: list[SmartCleanupRecord],
+    segments: list[ScriptSegment],
+    auto_pause_insertions: list[int],
+    debug_path: Path,
+) -> None:
+    """Write raw PDF lines, final text units, and auto-pause positions."""
+
+    text_segments = [segment for segment in segments if segment.kind == "text"]
+
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
+    with debug_path.open("w", encoding="utf-8") as debug_file:
+        debug_file.write("RAW LINES:\n")
+        for record in cleanup_records:
+            debug_file.write(f"{record.raw_line}\n")
+        debug_file.write("\nFINAL CLEANED SEGMENTS:\n")
+        for index, segment in enumerate(text_segments, start=1):
+            debug_file.write(f"{index}. {segment.text}\n")
+            debug_file.write(
+                f"PRACTICE MODE: {'ON' if segment.practice_mode else 'OFF'}\n"
+            )
+            debug_file.write(f"TRIGGER:\n{segment.practice_trigger or 'none'}\n")
+            debug_file.write(
+                "PAUSE INSERTED:\n"
+                f"{'yes' if segment.practice_pause_inserted else 'no'}\n"
+            )
+        debug_file.write("\nAUTO PAUSE INSERTED AFTER:\n")
+        if auto_pause_insertions:
+            for segment_number in auto_pause_insertions:
+                debug_file.write(f"segment {segment_number}\n")
+        else:
+            debug_file.write("none\n")
 
 
 def write_debug_text(text: str, debug_path: Path) -> None:
@@ -1467,6 +1997,7 @@ class PDFAudiobookApp(tk.Tk):
         )
         self.selected_auto_pause_label = tk.StringVar(value="3 seconds")
         self.auto_pause_seconds = tk.IntVar(value=DEFAULT_AUTO_PAUSE_SECONDS)
+        self.selected_auto_pause_segmentation = tk.StringVar(value="Paragraph")
         self.auto_detect_language = tk.BooleanVar(value=DEFAULT_AUTO_DETECT_LANGUAGE)
         self.default_untagged_language = tk.StringVar(
             value=language_name(DEFAULT_UNTAGGED_LANGUAGE)
@@ -1822,6 +2353,20 @@ class PDFAudiobookApp(tk.Tk):
             self._update_auto_pause_from_label,
         )
 
+        ttk.Label(self.learning_card, text="Auto pause by").grid(
+            row=5, column=0, sticky="w", pady=(10, 0)
+        )
+        self.auto_pause_segmentation_menu = ttk.Combobox(
+            self.learning_card,
+            textvariable=self.selected_auto_pause_segmentation,
+            state="readonly",
+            values=list(AUTO_PAUSE_SEGMENTATION_OPTIONS),
+            width=12,
+        )
+        self.auto_pause_segmentation_menu.grid(
+            row=5, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
+        )
+
         self.conversion_card = self._create_card(content)
         self.conversion_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
         self.conversion_card.columnconfigure(0, weight=1)
@@ -2103,6 +2648,18 @@ class PDFAudiobookApp(tk.Tk):
                 self.selected_auto_pause_label.set(
                     self._auto_pause_label_for_seconds(auto_pause_seconds_value)
                 )
+            auto_pause_segmentation = str(
+                settings.get(
+                    "auto_pause_segmentation",
+                    DEFAULT_AUTO_PAUSE_SEGMENTATION,
+                )
+            ).lower()
+            if auto_pause_segmentation in AUTO_PAUSE_SEGMENTATION_OPTIONS.values():
+                self.selected_auto_pause_segmentation.set(
+                    self._auto_pause_segmentation_label_for_value(
+                        auto_pause_segmentation
+                    )
+                )
             self.auto_detect_language.set(
                 bool(
                     settings.get(
@@ -2143,6 +2700,7 @@ class PDFAudiobookApp(tk.Tk):
             self.auto_learning_pauses,
             self.selected_auto_pause_label,
             self.auto_pause_seconds,
+            self.selected_auto_pause_segmentation,
             self.auto_detect_language,
             self.default_untagged_language,
             self.open_audio_when_finished,
@@ -2160,6 +2718,7 @@ class PDFAudiobookApp(tk.Tk):
             "volume": self.selected_volume_label.get(),
             "auto_learning_pauses": bool(self.auto_learning_pauses.get()),
             "auto_pause_seconds": int(self.auto_pause_seconds.get()),
+            "auto_pause_segmentation": self._auto_pause_segmentation_value(),
             "auto_detect_language": bool(self.auto_detect_language.get()),
             "default_untagged_language": self._default_untagged_language_code(),
             "open_audio_when_finished": bool(self.open_audio_when_finished.get()),
@@ -2418,6 +2977,7 @@ class PDFAudiobookApp(tk.Tk):
             default_untagged_language=self._default_untagged_language_code(),
             auto_learning_pauses=bool(self.auto_learning_pauses.get()),
             auto_pause_seconds=int(self.auto_pause_seconds.get()),
+            auto_pause_segmentation=self._auto_pause_segmentation_value(),
         )
 
     def _default_untagged_language_code(self) -> str:
@@ -2487,6 +3047,23 @@ class PDFAudiobookApp(tk.Tk):
                 return label
         return "3 seconds"
 
+    def _auto_pause_segmentation_value(self) -> str:
+        """Return the internal auto-pause segmentation mode."""
+
+        return AUTO_PAUSE_SEGMENTATION_OPTIONS.get(
+            self.selected_auto_pause_segmentation.get(),
+            DEFAULT_AUTO_PAUSE_SEGMENTATION,
+        )
+
+    @staticmethod
+    def _auto_pause_segmentation_label_for_value(value: str) -> str:
+        """Return the dropdown label for an auto-pause segmentation value."""
+
+        for label, option_value in AUTO_PAUSE_SEGMENTATION_OPTIONS.items():
+            if option_value == value:
+                return label
+        return "Paragraph"
+
     def _set_progress(self, percent: float) -> None:
         """Update progress value and percentage label together."""
 
@@ -2514,6 +3091,7 @@ class PDFAudiobookApp(tk.Tk):
                     write_debug_text(text, DEBUG_NORMALIZED_TEXT_FILE)
                 except OSError:
                     traceback.print_exc()
+            text, smart_cleanup_records = smart_pdf_cleanup(text)
 
             print(
                 "Auto-detect language: "
@@ -2528,18 +3106,30 @@ class PDFAudiobookApp(tk.Tk):
                 auto_detect_language=settings.auto_detect_language,
                 default_language=settings.default_untagged_language,
                 auto_learning_pauses_enabled=settings.auto_learning_pauses,
+                auto_pause_segmentation=settings.auto_pause_segmentation,
             )
             print(
                 "Auto Learning Pauses: "
                 f"{'ON' if settings.auto_learning_pauses else 'OFF'}"
             )
+            final_segments_before_auto_pauses = segments
+            auto_pause_debug_insertions: list[int] = []
             if settings.auto_learning_pauses:
+                auto_pause_debug_insertions = auto_pause_inserted_after_text_segments(
+                    final_segments_before_auto_pauses
+                )
                 segments = add_auto_learning_pauses(
-                    segments,
+                    final_segments_before_auto_pauses,
                     auto_pause_seconds=settings.auto_pause_seconds,
                 )
             if DEBUG_MODE:
                 try:
+                    write_smart_cleanup_debug(
+                        smart_cleanup_records,
+                        final_segments_before_auto_pauses,
+                        auto_pause_debug_insertions,
+                        SMART_CLEANUP_DEBUG_FILE,
+                    )
                     write_debug_segments(segments, DEBUG_SEGMENTS_FILE)
                 except OSError:
                     traceback.print_exc()

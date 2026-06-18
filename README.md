@@ -20,6 +20,7 @@ voice control and timed pauses.
 - Voice Preview for selected voices and speech settings
 - Speech rate and volume controls
 - Auto Learning Pauses for normal PDFs without pause tags
+- Auto pause segmentation by sentence or paragraph/idea block
 - Modern dark interface with toggle switches
 - Official EchoLearn logo in the app header
 - Clickable PDF selection area with Browse PDF fallback
@@ -129,7 +130,8 @@ If Finder still shows an old icon after rebuilding, delete the previous
 4. Select an English voice and a Spanish voice.
 5. Leave **Auto-detect language** on for normal PDFs, or choose the default
    language for untagged text.
-6. Optionally enable **Auto Learning Pauses** and choose an auto pause duration.
+6. Optionally enable **Auto Learning Pauses**, choose an auto pause duration,
+   and choose whether pauses are added by **Paragraph** or **Sentence**.
 7. Adjust speech rate and volume.
 8. Click **Convert to MP3**.
 9. Follow the progress percentage, current page, and current segment updates.
@@ -153,6 +155,22 @@ untagged text**. Auto-detect is on by default. When EchoLearn cannot confidently
 detect a segment, it uses the selected default language, which is English by
 default.
 
+Auto Learning Pauses can be inserted by **Paragraph** or **Sentence**.
+**Paragraph** is the default and treats consecutive instructional sentences as
+one idea block, so EchoLearn pauses after the explanation instead of between
+each sentence. **Sentence** inserts pauses after each complete sentence. Titles,
+short standalone prompts, short English dialogue lines, and manual pause tags
+remain separate boundaries.
+
+EchoLearn also detects simple practice sections automatically without AI. It
+starts in Flow Mode, reading titles, introductions, explanations, and full
+dialogues naturally without long learning pauses. When it sees practice cues
+such as **Repite**, **Escucha y repite**, **Intenta responder**, **Try to
+answer**, or **Listen and repeat**, it switches to Practice Mode and applies
+Auto Learning Pauses after practice segments. Transition phrases such as
+**Muy bien**, **Excelente**, **Now listen to the full conversation**, and
+**That is all for today** return the lesson to Flow Mode.
+
 ## Workflow
 
 EchoLearn stays focused on four steps:
@@ -168,6 +186,16 @@ EchoLearn works with normal selectable-text PDFs without language tags. For
 untagged text, it checks each paragraph or sentence for Spanish characters,
 common Spanish words, and common English words, then chooses the matching voice.
 If detection is uncertain, it uses **Default language for untagged text**.
+
+For normal lesson PDFs, EchoLearn first cleans extracted text by merging wrapped
+PDF lines into final speech segments. With Auto Learning Pauses set to
+**Paragraph**, related instructional sentences are grouped into one idea block
+and receive one pause at the end. With **Sentence**, each complete sentence can
+receive its own pause.
+
+Manual pause tags such as `[PAUSE_3]` still override automatic practice pauses,
+so EchoLearn does not add a duplicate Auto Learning Pause immediately before a
+manual pause.
 
 Tags are still supported for advanced control. Add tags directly in your PDF
 text when you want to force a specific voice or add timed pauses. `[EN]` and
