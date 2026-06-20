@@ -46,6 +46,7 @@ EchoLearn/
 │   ├── conversion_modes.md
 │   ├── lesson_builder_architecture.md
 │   ├── lesson_builder_v1.md
+│   ├── lesson_builder_v2.md
 │   └── echolearn_markup_language_v1.md
 ├── lesson_builder.py
 ├── README.md
@@ -163,11 +164,18 @@ structured lessons.
 See `docs/conversion_modes.md` for more about Audiobook Mode and EchoLesson
 Mode.
 
-When EchoLesson Mode is selected, the EchoLesson Builder section appears with a
-read-only Lesson Structure Preview. The **Generate Lesson Structure** button
+When EchoLesson Mode is selected, the EchoLesson Builder section appears with an
+editable Lesson Structure Preview. The **Generate Lesson Structure** button
 creates a first-draft EchoLearn Markup structure from the selected PDF using
-simple deterministic rules. **Copy Structure** copies the preview markup to the
-clipboard.
+simple deterministic v2 rules. You can edit the markup manually, then generate
+learning audio from the edited preview. **Copy Structure** copies the preview
+markup to the clipboard.
+
+EchoLesson audio generation interprets EchoLearn Markup instead of reading tags
+aloud. `[SPEAKER_1]` uses the selected English voice, `[SPEAKER_2]` uses the
+selected Spanish voice, `[PRACTICE]` adds a learning pause after practice lines,
+and `[PAUSE_1]`, `[PAUSE_2]`, `[PAUSE_3]`, `[PAUSE_5]`, `[PAUSE_8]`, and
+`[PAUSE_10]` create real silence.
 
 Speech rate uses simple dropdown options: **Very Slow**, **Slow**, **Normal**,
 **Fast**, and **Very Fast**. Volume uses **Very Low**, **Low**, **Normal**,
@@ -242,8 +250,9 @@ EchoLearn will eventually use AI to transform normal PDFs into structured
 learning lessons before generating audio.
 
 See `docs/lesson_builder_architecture.md` for the planned builder flow and
-future responsibilities. See `docs/lesson_builder_v1.md` for the current
-deterministic structure generation rules and known limitations.
+future responsibilities. See `docs/lesson_builder_v2.md` for the current
+deterministic structure generation rules and known limitations. The older v1
+rules are documented in `docs/lesson_builder_v1.md`.
 
 Use `[EN]` before English text:
 

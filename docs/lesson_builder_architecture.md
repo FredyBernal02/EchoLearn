@@ -47,8 +47,9 @@ The EchoLesson Builder will eventually:
 The current foundation includes:
 
 - An EchoLesson-only Builder section in the UI
-- A read-only Lesson Structure Preview
-- A placeholder Generate Lesson Structure action
-- A `LessonBuilder` class stub in `lesson_builder.py`
+- An editable Lesson Structure Preview
+- A deterministic Generate Lesson Structure action
+- A `LessonBuilder` class in `lesson_builder.py`
+- EchoLesson audio generation from the edited preview markup
 
-No audiobook conversion behavior changes are part of this foundation.
+Audiobook Mode continues to use the original PDF-to-audio path.

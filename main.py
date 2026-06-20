@@ -100,8 +100,13 @@ AUTO_PAUSE_SEGMENTATION_OPTIONS = {
     "Sentence": "sentence",
 }
 SUPPORTED_PAUSES = {1, 2, 3, 5, 10}
+ECHOLESSON_SUPPORTED_PAUSES = {1, 2, 3, 5, 8, 10}
 TAG_PATTERN = re.compile(r"\[(EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]", re.IGNORECASE)
 TAG_ONLY_PATTERN = re.compile(r"^\[(EN|ES|PAUSE_\d+)\]$", re.IGNORECASE)
+ECHOLESSON_TAG_PATTERN = re.compile(
+    r"^\[(TITLE|FLOW|EXPLANATION|DIALOG|PRACTICE|REVIEW|SPEAKER_1|SPEAKER_2|EN|ES|PAUSE_(\d+)|PAUSE_[^\]]+)\]$",
+    re.IGNORECASE,
+)
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
 SENTENCE_ENDING_PUNCTUATION = ".!?:;"
 SPANISH_CHARACTER_PATTERN = re.compile(r"[áéíóúüñÁÉÍÓÚÜÑ¿¡]")
@@ -433,6 +438,9 @@ class ConversionSettings:
     """Settings selected by the user before conversion starts."""
 
     conversion_mode: str
+    lesson_markup: str
+    speaker_1_voice_id: str
+    speaker_2_voice_id: str
     pdf_path: Path
     output_path: Path
     english_voice_id: str
@@ -462,8 +470,11 @@ class ScriptSegment:
 
     kind: str
     text: str = ""
+    voice_id: str = ""
     language: str = "EN"
     seconds: int = 0
+    section_type: str = "FLOW"
+    pause_after: int = 0
     language_source: str = "default"
     detection_confident: bool = True
     detection_score: int = 0
@@ -1326,6 +1337,128 @@ def parse_audio_script(
     return segments, warnings
 
 
+def parse_echolesson_markup(
+    markup: str,
+    *,
+    speaker_1_voice_id: str,
+    speaker_2_voice_id: str,
+    practice_pause_seconds: int,
+) -> tuple[list[ScriptSegment], list[str]]:
+    """Convert EchoLearn Markup into audio segments for EchoLesson Mode."""
+
+    segments: list[ScriptSegment] = []
+    warnings: list[str] = []
+    current_section = "FLOW"
+    current_language = "EN"
+    current_voice_id = ""
+
+    def add_text_segment(raw_text: str) -> None:
+        text = normalize_text(raw_text)
+        if not text:
+            return
+        pause_after = (
+            practice_pause_seconds
+            if current_section == "PRACTICE"
+            else 0
+        )
+        segments.append(
+            ScriptSegment(
+                kind="text",
+                text=text,
+                voice_id=current_voice_id,
+                language=current_language,
+                section_type=current_section,
+                pause_after=pause_after,
+                language_source="echolesson markup",
+                auto_pause_after=False,
+                raw_text_unit=text,
+                practice_mode=current_section == "PRACTICE",
+                practice_pause_inserted=pause_after > 0,
+            )
+        )
+        if pause_after:
+            segments.append(
+                ScriptSegment(
+                    kind="pause",
+                    seconds=pause_after,
+                    section_type=current_section,
+                )
+            )
+
+    for raw_line in markup.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        tag_match = ECHOLESSON_TAG_PATTERN.match(line)
+        if tag_match:
+            tag = tag_match.group(1).upper()
+            pause_seconds = tag_match.group(2)
+
+            if tag in {"TITLE", "FLOW", "EXPLANATION", "DIALOG", "PRACTICE", "REVIEW"}:
+                current_section = tag
+                if tag != "DIALOG":
+                    current_voice_id = ""
+                    current_language = "EN"
+                continue
+            if tag == "SPEAKER_1":
+                current_voice_id = speaker_1_voice_id
+                current_language = "EN"
+                continue
+            if tag == "SPEAKER_2":
+                current_voice_id = speaker_2_voice_id
+                current_language = "ES"
+                continue
+            if tag == "EN":
+                current_voice_id = ""
+                current_language = "EN"
+                continue
+            if tag == "ES":
+                current_voice_id = ""
+                current_language = "ES"
+                continue
+            if pause_seconds:
+                seconds = int(pause_seconds)
+                if seconds in ECHOLESSON_SUPPORTED_PAUSES:
+                    segments.append(
+                        ScriptSegment(
+                            kind="pause",
+                            seconds=seconds,
+                            section_type=current_section,
+                        )
+                    )
+                else:
+                    warnings.append(f"Ignored unsupported pause tag [{tag}].")
+                continue
+
+        if line.startswith("[") and line.endswith("]"):
+            warnings.append(f"Ignored unsupported EchoLesson tag {line}.")
+            continue
+
+        add_text_segment(line)
+
+    return segments, warnings
+
+
+def log_echolesson_segments(segments: list[ScriptSegment]) -> None:
+    """Print EchoLesson parser output so mode routing is easy to verify."""
+
+    print("ECHOLESSON PARSED SEGMENTS:")
+    for index, segment in enumerate(segments, start=1):
+        if segment.kind == "pause":
+            print(
+                f"{index}. pause seconds={segment.seconds} "
+                f"section={segment.section_type}"
+            )
+        else:
+            print(
+                f"{index}. text section={segment.section_type} "
+                f"voice_id={segment.voice_id or 'default'} "
+                f"language={segment.language} pause_after={segment.pause_after} "
+                f"text={segment.text}"
+            )
+
+
 def add_auto_learning_pauses(
     segments: list[ScriptSegment],
     *,
@@ -1359,6 +1492,9 @@ def write_debug_segments(segments: list[ScriptSegment], debug_path: Path) -> Non
             debug_file.write(f"Segment {index}\n")
             debug_file.write(f"kind={segment.kind}\n")
             debug_file.write(f"language={segment.language}\n")
+            debug_file.write(f"voice_id={segment.voice_id or 'default'}\n")
+            debug_file.write(f"section_type={segment.section_type}\n")
+            debug_file.write(f"pause_after={segment.pause_after}\n")
             debug_file.write(f"language_source={segment.language_source}\n")
             debug_file.write(f"detection_confident={segment.detection_confident}\n")
             debug_file.write(f"detection_score={segment.detection_score}\n")
@@ -1567,7 +1703,7 @@ class TextToSpeechService:
                         progress_callback(processed_segments, total_segments)
                         continue
 
-                    voice_id = (
+                    voice_id = segment.voice_id or (
                         spanish_voice_id
                         if segment.language == "ES"
                         else english_voice_id
@@ -2020,6 +2156,8 @@ class PDFAudiobookApp(tk.Tk):
         self.status_text = tk.StringVar(value="Choose a PDF to begin.")
         self.selected_english_voice = tk.StringVar(value=DEFAULT_ENGLISH_VOICE)
         self.selected_spanish_voice = tk.StringVar(value=DEFAULT_SPANISH_VOICE)
+        self.selected_speaker_1_voice = tk.StringVar(value=DEFAULT_ENGLISH_VOICE)
+        self.selected_speaker_2_voice = tk.StringVar(value=DEFAULT_SPANISH_VOICE)
         self.rate = tk.IntVar(value=DEFAULT_RATE)
         self.volume = tk.IntVar(value=DEFAULT_VOLUME)
         self.selected_rate_label = tk.StringVar(value="Normal")
@@ -2462,6 +2600,7 @@ class PDFAudiobookApp(tk.Tk):
         self.lesson_builder_card = self._create_card(content)
         self.lesson_builder_card.grid(row=3, column=0, sticky="nsew", padx=(0, 8))
         self.lesson_builder_card.columnconfigure(0, weight=1)
+        self.lesson_builder_card.columnconfigure(1, weight=1)
         self._add_card_header(
             self.lesson_builder_card,
             "EchoLesson Builder",
@@ -2480,8 +2619,36 @@ class PDFAudiobookApp(tk.Tk):
         ).grid(row=1, column=0, sticky="w", pady=(14, 0))
         ttk.Label(
             self.lesson_builder_card,
-            text="Lesson Structure Preview",
+            text="Speaker 1 Voice",
         ).grid(row=2, column=0, sticky="w", pady=(14, 0))
+        self.speaker_1_voice_menu = ttk.Combobox(
+            self.lesson_builder_card,
+            textvariable=self.selected_speaker_1_voice,
+            state="readonly",
+            values=[],
+        )
+        self.speaker_1_voice_menu.grid(
+            row=2, column=1, sticky="ew", padx=(12, 0), pady=(14, 0)
+        )
+
+        ttk.Label(
+            self.lesson_builder_card,
+            text="Speaker 2 Voice",
+        ).grid(row=3, column=0, sticky="w", pady=(12, 0))
+        self.speaker_2_voice_menu = ttk.Combobox(
+            self.lesson_builder_card,
+            textvariable=self.selected_speaker_2_voice,
+            state="readonly",
+            values=[],
+        )
+        self.speaker_2_voice_menu.grid(
+            row=3, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
+        )
+
+        ttk.Label(
+            self.lesson_builder_card,
+            text="Lesson Structure Preview",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(14, 0))
 
         self.lesson_structure_preview = tk.Text(
             self.lesson_builder_card,
@@ -2496,20 +2663,21 @@ class PDFAudiobookApp(tk.Tk):
             pady=10,
             font=("TkFixedFont", 11),
         )
-        self.lesson_structure_preview.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
+        self.lesson_structure_preview.grid(
+            row=5, column=0, columnspan=2, sticky="nsew", pady=(6, 0)
+        )
         self.lesson_structure_preview.insert("1.0", LESSON_STRUCTURE_PLACEHOLDER)
-        self.lesson_structure_preview.configure(state=tk.DISABLED)
 
         ttk.Button(
             self.lesson_builder_card,
             text="Generate Lesson Structure",
             command=self._generate_lesson_structure,
-        ).grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(14, 0))
         ttk.Button(
             self.lesson_builder_card,
             text="Copy Structure",
             command=self._copy_lesson_structure,
-        ).grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         self.conversion_card = self._create_card(content)
         self.conversion_card.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(8, 0))
@@ -2760,11 +2928,20 @@ class PDFAudiobookApp(tk.Tk):
 
         english_labels = [option.label for option in self._english_voice_options]
         spanish_labels = [option.label for option in self._spanish_voice_options]
+        speaker_labels = [option.label for option in self._all_voice_options()]
 
         self.english_voice_menu.configure(values=english_labels or [DEFAULT_ENGLISH_VOICE])
         self.spanish_voice_menu.configure(values=spanish_labels or [DEFAULT_SPANISH_VOICE])
+        self.speaker_1_voice_menu.configure(
+            values=speaker_labels or [DEFAULT_ENGLISH_VOICE]
+        )
+        self.speaker_2_voice_menu.configure(
+            values=speaker_labels or [DEFAULT_SPANISH_VOICE]
+        )
         self.selected_english_voice.set(DEFAULT_ENGLISH_VOICE)
         self.selected_spanish_voice.set(DEFAULT_SPANISH_VOICE)
+        self.selected_speaker_1_voice.set(DEFAULT_ENGLISH_VOICE)
+        self.selected_speaker_2_voice.set(DEFAULT_SPANISH_VOICE)
 
     def _load_settings(self) -> None:
         """Load saved settings from disk, ignoring missing or invalid files."""
@@ -2787,6 +2964,13 @@ class PDFAudiobookApp(tk.Tk):
                 self.selected_english_voice.set(english_voice)
             if spanish_voice in [option.label for option in self._spanish_voice_options]:
                 self.selected_spanish_voice.set(spanish_voice)
+            speaker_voice_labels = [option.label for option in self._all_voice_options()]
+            speaker_1_voice = str(settings.get("speaker_1_voice", ""))
+            speaker_2_voice = str(settings.get("speaker_2_voice", ""))
+            if speaker_1_voice in speaker_voice_labels:
+                self.selected_speaker_1_voice.set(speaker_1_voice)
+            if speaker_2_voice in speaker_voice_labels:
+                self.selected_speaker_2_voice.set(speaker_2_voice)
 
             rate_label = str(settings.get("speech_rate", ""))
             volume_label = str(settings.get("volume", ""))
@@ -2873,6 +3057,8 @@ class PDFAudiobookApp(tk.Tk):
         watched_variables = [
             self.selected_english_voice,
             self.selected_spanish_voice,
+            self.selected_speaker_1_voice,
+            self.selected_speaker_2_voice,
             self.selected_rate_label,
             self.selected_volume_label,
             self.auto_learning_pauses,
@@ -2893,6 +3079,8 @@ class PDFAudiobookApp(tk.Tk):
         return {
             "english_voice": self.selected_english_voice.get(),
             "spanish_voice": self.selected_spanish_voice.get(),
+            "speaker_1_voice": self.selected_speaker_1_voice.get(),
+            "speaker_2_voice": self.selected_speaker_2_voice.get(),
             "speech_rate": self.selected_rate_label.get(),
             "volume": self.selected_volume_label.get(),
             "conversion_mode": self._conversion_mode_value(),
@@ -3077,6 +3265,12 @@ class PDFAudiobookApp(tk.Tk):
         if self._is_processing:
             return
 
+        print(
+            "START CONVERSION BUTTON: "
+            f"selected_ui_mode={self.selected_conversion_mode.get()} "
+            f"resolved_mode={self._conversion_mode_value()}"
+        )
+
         try:
             settings = self._get_settings()
         except ValueError as exc:
@@ -3138,8 +3332,27 @@ class PDFAudiobookApp(tk.Tk):
             output_path = output_path.with_suffix(".mp3")
             self.output_path.set(str(output_path))
 
+        conversion_mode = self._conversion_mode_value()
+        lesson_markup = self._lesson_structure_markup()
+        print(
+            "GET SETTINGS: "
+            f"conversion_mode={conversion_mode} "
+            f"lesson_markup_chars={len(lesson_markup)}"
+        )
+
         return ConversionSettings(
-            conversion_mode=self._conversion_mode_value(),
+            conversion_mode=conversion_mode,
+            lesson_markup=lesson_markup,
+            speaker_1_voice_id=self._selected_voice_id(
+                self.selected_speaker_1_voice.get(),
+                self._all_voice_options(),
+                DEFAULT_ENGLISH_VOICE,
+            ),
+            speaker_2_voice_id=self._selected_voice_id(
+                self.selected_speaker_2_voice.get(),
+                self._all_voice_options(),
+                DEFAULT_SPANISH_VOICE,
+            ),
             pdf_path=pdf_path,
             output_path=output_path,
             english_voice_id=self._selected_voice_id(
@@ -3196,6 +3409,11 @@ class PDFAudiobookApp(tk.Tk):
             if option.label == selected_label:
                 return option.voice_id
         return selected_label or default_voice_id
+
+    def _all_voice_options(self) -> list[VoiceOption]:
+        """Return every voice available for explicit EchoLesson speakers."""
+
+        return [*self._english_voice_options, *self._spanish_voice_options]
 
     def _update_rate_from_label(self, _event: tk.Event | None = None) -> None:
         """Map the selected speech-rate label to the internal TTS value."""
@@ -3267,8 +3485,10 @@ class PDFAudiobookApp(tk.Tk):
 
         if self._conversion_mode_value() == "echolesson":
             self.conversion_mode_description.set(ECHOLESSON_MODE_DESCRIPTION)
+            self.convert_button.configure(text="Generate Learning Audio")
         else:
             self.conversion_mode_description.set(AUDIOBOOK_MODE_DESCRIPTION)
+            self.convert_button.configure(text="Convert to MP3")
         self._sync_lesson_builder_visibility()
 
     def _sync_lesson_builder_visibility(self) -> None:
@@ -3322,17 +3542,21 @@ class PDFAudiobookApp(tk.Tk):
         self.status_text.set("Lesson structure preview generated.")
 
     def _set_lesson_structure_preview(self, markup: str) -> None:
-        """Replace the read-only lesson structure preview text."""
+        """Replace the editable lesson structure preview text."""
 
         self.lesson_structure_preview.configure(state=tk.NORMAL)
         self.lesson_structure_preview.delete("1.0", tk.END)
         self.lesson_structure_preview.insert("1.0", markup)
-        self.lesson_structure_preview.configure(state=tk.DISABLED)
+
+    def _lesson_structure_markup(self) -> str:
+        """Return the edited EchoLesson markup from the preview."""
+
+        return self.lesson_structure_preview.get("1.0", tk.END).strip()
 
     def _copy_lesson_structure(self) -> None:
         """Copy generated lesson markup from the preview to the clipboard."""
 
-        markup = self.lesson_structure_preview.get("1.0", tk.END).strip()
+        markup = self._lesson_structure_markup()
         if not markup:
             return
         self.clipboard_clear()
@@ -3351,7 +3575,18 @@ class PDFAudiobookApp(tk.Tk):
 
         try:
             log_runtime_paths(settings.output_path)
-            self._messages.put(ProgressMessage("status", "Processing PDF..."))
+            print(f"RUN CONVERSION MODE: {settings.conversion_mode}")
+            if settings.conversion_mode == "echolesson":
+                print(
+                    "ECHOLESSON SOURCE: editable preview "
+                    f"chars={len(settings.lesson_markup)}"
+                )
+                self._messages.put(
+                    ProgressMessage("status", "Preparing edited lesson markup...")
+                )
+            else:
+                print(f"AUDIOBOOK SOURCE: PDF {settings.pdf_path}")
+                self._messages.put(ProgressMessage("status", "Processing PDF..."))
 
             def progress_callback(page: int, total: int) -> None:
                 percent = (page / total) * 70
@@ -3360,51 +3595,75 @@ class PDFAudiobookApp(tk.Tk):
                     ProgressMessage("status", f"Processing page {page} of {total}")
                 )
 
-            text = extract_text_from_pdf(settings.pdf_path, progress_callback)
+            smart_cleanup_records: list[SmartCleanupRecord] = []
+            if settings.conversion_mode == "echolesson":
+                text = settings.lesson_markup
+                self._messages.put(ProgressMessage("progress", 70))
+            else:
+                text = extract_text_from_pdf(settings.pdf_path, progress_callback)
             if DEBUG_MODE:
                 try:
                     write_debug_text(text, DEBUG_NORMALIZED_TEXT_FILE)
                 except OSError:
                     traceback.print_exc()
-            text, smart_cleanup_records = smart_pdf_cleanup(text)
+            if settings.conversion_mode != "echolesson":
+                text, smart_cleanup_records = smart_pdf_cleanup(text)
 
-            print(
-                "Auto-detect language: "
-                f"{'ON' if settings.auto_detect_language else 'OFF'}"
-            )
-            print(
-                "Default language for untagged text: "
-                f"{settings.default_untagged_language}"
-            )
-            segments, warnings = parse_audio_script(
-                text,
-                auto_detect_language=settings.auto_detect_language,
-                default_language=settings.default_untagged_language,
-                auto_learning_pauses_enabled=settings.auto_learning_pauses,
-                auto_pause_segmentation=settings.auto_pause_segmentation,
-            )
-            print(
-                "Auto Learning Pauses: "
-                f"{'ON' if settings.auto_learning_pauses else 'OFF'}"
-            )
-            final_segments_before_auto_pauses = segments
             auto_pause_debug_insertions: list[int] = []
-            if settings.auto_learning_pauses:
-                auto_pause_debug_insertions = auto_pause_inserted_after_text_segments(
-                    final_segments_before_auto_pauses
+            if settings.conversion_mode == "echolesson":
+                print("EchoLesson markup parser: ON")
+                print(
+                    "ECHOLESSON SPEAKER VOICES: "
+                    f"speaker_1={settings.speaker_1_voice_id} "
+                    f"speaker_2={settings.speaker_2_voice_id}"
                 )
-                segments = add_auto_learning_pauses(
-                    final_segments_before_auto_pauses,
-                    auto_pause_seconds=settings.auto_pause_seconds,
+                segments, warnings = parse_echolesson_markup(
+                    text,
+                    speaker_1_voice_id=settings.speaker_1_voice_id,
+                    speaker_2_voice_id=settings.speaker_2_voice_id,
+                    practice_pause_seconds=settings.auto_pause_seconds,
                 )
+                print(f"ECHOLESSON PARSER RECEIVED CHARS: {len(text)}")
+                log_echolesson_segments(segments)
+                final_segments_before_auto_pauses = segments
+            else:
+                print(
+                    "Auto-detect language: "
+                    f"{'ON' if settings.auto_detect_language else 'OFF'}"
+                )
+                print(
+                    "Default language for untagged text: "
+                    f"{settings.default_untagged_language}"
+                )
+                segments, warnings = parse_audio_script(
+                    text,
+                    auto_detect_language=settings.auto_detect_language,
+                    default_language=settings.default_untagged_language,
+                    auto_learning_pauses_enabled=settings.auto_learning_pauses,
+                    auto_pause_segmentation=settings.auto_pause_segmentation,
+                )
+                print(
+                    "Auto Learning Pauses: "
+                    f"{'ON' if settings.auto_learning_pauses else 'OFF'}"
+                )
+                final_segments_before_auto_pauses = segments
+                if settings.auto_learning_pauses:
+                    auto_pause_debug_insertions = auto_pause_inserted_after_text_segments(
+                        final_segments_before_auto_pauses
+                    )
+                    segments = add_auto_learning_pauses(
+                        final_segments_before_auto_pauses,
+                        auto_pause_seconds=settings.auto_pause_seconds,
+                    )
             if DEBUG_MODE:
                 try:
-                    write_smart_cleanup_debug(
-                        smart_cleanup_records,
-                        final_segments_before_auto_pauses,
-                        auto_pause_debug_insertions,
-                        SMART_CLEANUP_DEBUG_FILE,
-                    )
+                    if settings.conversion_mode != "echolesson":
+                        write_smart_cleanup_debug(
+                            smart_cleanup_records,
+                            final_segments_before_auto_pauses,
+                            auto_pause_debug_insertions,
+                            SMART_CLEANUP_DEBUG_FILE,
+                        )
                     write_debug_segments(segments, DEBUG_SEGMENTS_FILE)
                 except OSError:
                     traceback.print_exc()
@@ -3412,7 +3671,11 @@ class PDFAudiobookApp(tk.Tk):
             self._messages.put(
                 ProgressMessage(
                     "status",
-                    "Creating full audiobook MP3...",
+                    (
+                        "Creating learning audio MP3..."
+                        if settings.conversion_mode == "echolesson"
+                        else "Creating full audiobook MP3..."
+                    ),
                 )
             )
             self._messages.put(ProgressMessage("progress", 72))
