@@ -43,6 +43,39 @@ DEFAULT_AUTO_DETECT_LANGUAGE = True
 DEFAULT_AUTO_LEARNING_PAUSES_ENABLED = False
 DEFAULT_AUTO_PAUSE_SECONDS = 3
 DEFAULT_AUTO_PAUSE_SEGMENTATION = "paragraph"
+DEFAULT_CONVERSION_MODE = "audiobook"
+CONVERSION_MODE_OPTIONS = {
+    "Audiobook": "audiobook",
+    "EchoLesson": "echolesson",
+}
+AUDIOBOOK_MODE_DESCRIPTION = (
+    "Continuous listening audio using current language detection and voices. "
+    "Minimal interruptions; Auto Learning Pauses are off by default."
+)
+ECHOLESSON_MODE_DESCRIPTION = (
+    "EchoLesson Mode is under development. Future versions will use AI to "
+    "transform PDFs into structured lessons."
+)
+LESSON_STRUCTURE_PLACEHOLDER = """[TITLE]
+Lesson Title
+
+[FLOW]
+Introduction text...
+
+[DIALOG]
+[SPEAKER_1]
+Hello.
+
+[SPEAKER_2]
+Hi.
+
+[PRACTICE]
+Repeat this sentence.
+"""
+LESSON_BUILDER_UNAVAILABLE_MESSAGE = (
+    "AI Lesson Builder is not available yet. Future versions will automatically "
+    "convert PDFs into EchoLearn Markup."
+)
 RATE_OPTIONS = {
     "Very Slow": -50,
     "Slow": -25,
@@ -401,6 +434,7 @@ class VoiceOption:
 class ConversionSettings:
     """Settings selected by the user before conversion starts."""
 
+    conversion_mode: str
     pdf_path: Path
     output_path: Path
     english_voice_id: str
@@ -1998,6 +2032,10 @@ class PDFAudiobookApp(tk.Tk):
         self.selected_auto_pause_label = tk.StringVar(value="3 seconds")
         self.auto_pause_seconds = tk.IntVar(value=DEFAULT_AUTO_PAUSE_SECONDS)
         self.selected_auto_pause_segmentation = tk.StringVar(value="Paragraph")
+        self.selected_conversion_mode = tk.StringVar(value="Audiobook")
+        self.conversion_mode_description = tk.StringVar(
+            value=AUDIOBOOK_MODE_DESCRIPTION
+        )
         self.auto_detect_language = tk.BooleanVar(value=DEFAULT_AUTO_DETECT_LANGUAGE)
         self.default_untagged_language = tk.StringVar(
             value=language_name(DEFAULT_UNTAGGED_LANGUAGE)
@@ -2127,6 +2165,18 @@ class PDFAudiobookApp(tk.Tk):
             foreground=[("readonly", "#eef2f8")],
             selectbackground=[("readonly", "#10131a")],
             selectforeground=[("readonly", "#eef2f8")],
+        )
+        style.configure(
+            "TRadiobutton",
+            background="#191c24",
+            foreground="#eef2f8",
+            padding=(0, 4),
+            font=("TkDefaultFont", 11),
+        )
+        style.map(
+            "TRadiobutton",
+            background=[("active", "#191c24")],
+            foreground=[("active", "#ffffff")],
         )
         style.configure(
             "Horizontal.TProgressbar",
@@ -2367,8 +2417,99 @@ class PDFAudiobookApp(tk.Tk):
             row=5, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
         )
 
+        self.mode_card = self._create_card(content)
+        self.mode_card.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        self.mode_card.columnconfigure(0, weight=1)
+        self._add_card_header(
+            self.mode_card,
+            "Conversion Mode",
+            "Choose the listening experience",
+            "mode",
+        )
+
+        ttk.Radiobutton(
+            self.mode_card,
+            text="Audiobook",
+            variable=self.selected_conversion_mode,
+            value="Audiobook",
+            command=self._update_conversion_mode_description,
+        ).grid(row=1, column=0, sticky="w", pady=(14, 0))
+        ttk.Label(
+            self.mode_card,
+            text="Convert documents into continuous listening audio.",
+            style="Muted.TLabel",
+            wraplength=360,
+        ).grid(row=2, column=0, sticky="w", pady=(2, 0))
+
+        ttk.Radiobutton(
+            self.mode_card,
+            text="EchoLesson",
+            variable=self.selected_conversion_mode,
+            value="EchoLesson",
+            command=self._update_conversion_mode_description,
+        ).grid(row=3, column=0, sticky="w", pady=(14, 0))
+        ttk.Label(
+            self.mode_card,
+            text="Convert educational content into structured learning audio.",
+            style="Muted.TLabel",
+            wraplength=360,
+        ).grid(row=4, column=0, sticky="w", pady=(2, 0))
+        ttk.Label(
+            self.mode_card,
+            textvariable=self.conversion_mode_description,
+            style="Muted.TLabel",
+            wraplength=360,
+        ).grid(row=5, column=0, sticky="w", pady=(14, 0))
+
+        self.lesson_builder_card = self._create_card(content)
+        self.lesson_builder_card.grid(row=3, column=0, sticky="nsew", padx=(0, 8))
+        self.lesson_builder_card.columnconfigure(0, weight=1)
+        self._add_card_header(
+            self.lesson_builder_card,
+            "EchoLesson Builder",
+            "Future AI-powered lesson generation",
+            "builder",
+        )
+
+        ttk.Label(
+            self.lesson_builder_card,
+            text=(
+                "Future AI-powered lesson generation. This area will display "
+                "structured EchoLearn content before audio conversion."
+            ),
+            style="Muted.TLabel",
+            wraplength=360,
+        ).grid(row=1, column=0, sticky="w", pady=(14, 0))
+        ttk.Label(
+            self.lesson_builder_card,
+            text="Lesson Structure Preview",
+        ).grid(row=2, column=0, sticky="w", pady=(14, 0))
+
+        self.lesson_structure_preview = tk.Text(
+            self.lesson_builder_card,
+            height=14,
+            wrap=tk.WORD,
+            bg="#10131a",
+            fg="#eef2f8",
+            insertbackground="#eef2f8",
+            relief=tk.FLAT,
+            bd=0,
+            padx=10,
+            pady=10,
+            font=("TkFixedFont", 11),
+        )
+        self.lesson_structure_preview.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
+        self.lesson_structure_preview.insert("1.0", LESSON_STRUCTURE_PLACEHOLDER)
+        self.lesson_structure_preview.configure(state=tk.DISABLED)
+
+        ttk.Button(
+            self.lesson_builder_card,
+            text="Generate Lesson Structure",
+            command=self._show_lesson_builder_unavailable,
+        ).grid(row=4, column=0, sticky="ew", pady=(14, 0))
+
         self.conversion_card = self._create_card(content)
-        self.conversion_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
+        self.conversion_card.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(8, 0))
         self.conversion_card.columnconfigure(0, weight=1)
         self.conversion_card.columnconfigure(1, weight=0)
         self._add_card_header(
@@ -2452,6 +2593,7 @@ class PDFAudiobookApp(tk.Tk):
         )
         self.convert_button.grid(row=7, column=0, columnspan=2, sticky="ew")
 
+        self._sync_lesson_builder_visibility()
         self._bind_scroll_events(self)
 
     def _create_card(self, parent: tk.Widget) -> ttk.Frame:
@@ -2478,12 +2620,25 @@ class PDFAudiobookApp(tk.Tk):
             self.pdf_card.grid_configure(row=0, column=0, padx=0, pady=(0, 12))
             self.voices_card.grid_configure(row=1, column=0, padx=0, pady=(0, 12))
             self.learning_card.grid_configure(row=2, column=0, padx=0, pady=(0, 12))
-            self.conversion_card.grid_configure(row=3, column=0, padx=0, pady=(0, 0))
+            self.mode_card.grid_configure(row=3, column=0, padx=0, pady=(0, 12))
+            self.lesson_builder_card.grid_configure(
+                row=4, column=0, padx=0, pady=(0, 12)
+            )
+            self.conversion_card.grid_configure(
+                row=5, column=0, rowspan=1, padx=0, pady=(0, 0)
+            )
         else:
             self.pdf_card.grid_configure(row=0, column=0, padx=(0, 8), pady=(0, 12))
             self.voices_card.grid_configure(row=0, column=1, padx=(8, 0), pady=(0, 12))
-            self.learning_card.grid_configure(row=1, column=0, padx=(0, 8), pady=(0, 0))
-            self.conversion_card.grid_configure(row=1, column=1, padx=(8, 0), pady=(0, 0))
+            self.learning_card.grid_configure(row=1, column=0, padx=(0, 8), pady=(0, 12))
+            self.mode_card.grid_configure(row=2, column=0, padx=(0, 8), pady=(0, 12))
+            self.lesson_builder_card.grid_configure(
+                row=3, column=0, padx=(0, 8), pady=(0, 0)
+            )
+            self.conversion_card.grid_configure(
+                row=1, column=1, rowspan=3, padx=(8, 0), pady=(0, 0)
+            )
+        self._sync_lesson_builder_visibility()
 
     def _bind_scroll_events(self, widget: tk.Widget) -> None:
         """Bind scroll events across the app content tree."""
@@ -2573,6 +2728,18 @@ class PDFAudiobookApp(tk.Tk):
             canvas.create_line(22, 18, 28, 18, fill=muted, width=2)
             canvas.create_line(18, 22, 24, 28, fill=muted, width=2)
             canvas.create_line(32, 22, 28, 28, fill=muted, width=2)
+        elif icon_name == "mode":
+            canvas.create_oval(13, 13, 22, 22, outline=accent, width=2)
+            canvas.create_oval(26, 26, 35, 35, outline=accent, width=2)
+            canvas.create_line(24, 17, 34, 17, fill=muted, width=2)
+            canvas.create_line(14, 31, 24, 31, fill=muted, width=2)
+            canvas.create_line(22, 22, 26, 26, fill=muted, width=2)
+        elif icon_name == "builder":
+            canvas.create_rectangle(14, 12, 34, 36, outline=accent, width=2)
+            canvas.create_line(18, 19, 30, 19, fill=muted, width=2)
+            canvas.create_line(18, 24, 30, 24, fill=muted, width=2)
+            canvas.create_line(18, 29, 26, 29, fill=muted, width=2)
+            canvas.create_oval(29, 29, 37, 37, outline=accent, width=2)
         else:
             canvas.create_line(14, 24, 32, 24, fill=accent, width=3, arrow=tk.LAST)
             canvas.create_arc(13, 13, 36, 36, start=220, extent=250, outline=muted, width=2)
@@ -2660,6 +2827,14 @@ class PDFAudiobookApp(tk.Tk):
                         auto_pause_segmentation
                     )
                 )
+            conversion_mode = str(
+                settings.get("conversion_mode", DEFAULT_CONVERSION_MODE)
+            ).lower()
+            if conversion_mode in CONVERSION_MODE_OPTIONS.values():
+                self.selected_conversion_mode.set(
+                    self._conversion_mode_label_for_value(conversion_mode)
+                )
+                self._update_conversion_mode_description()
             self.auto_detect_language.set(
                 bool(
                     settings.get(
@@ -2701,6 +2876,7 @@ class PDFAudiobookApp(tk.Tk):
             self.selected_auto_pause_label,
             self.auto_pause_seconds,
             self.selected_auto_pause_segmentation,
+            self.selected_conversion_mode,
             self.auto_detect_language,
             self.default_untagged_language,
             self.open_audio_when_finished,
@@ -2716,6 +2892,7 @@ class PDFAudiobookApp(tk.Tk):
             "spanish_voice": self.selected_spanish_voice.get(),
             "speech_rate": self.selected_rate_label.get(),
             "volume": self.selected_volume_label.get(),
+            "conversion_mode": self._conversion_mode_value(),
             "auto_learning_pauses": bool(self.auto_learning_pauses.get()),
             "auto_pause_seconds": int(self.auto_pause_seconds.get()),
             "auto_pause_segmentation": self._auto_pause_segmentation_value(),
@@ -2959,6 +3136,7 @@ class PDFAudiobookApp(tk.Tk):
             self.output_path.set(str(output_path))
 
         return ConversionSettings(
+            conversion_mode=self._conversion_mode_value(),
             pdf_path=pdf_path,
             output_path=output_path,
             english_voice_id=self._selected_voice_id(
@@ -3063,6 +3241,48 @@ class PDFAudiobookApp(tk.Tk):
             if option_value == value:
                 return label
         return "Paragraph"
+
+    def _conversion_mode_value(self) -> str:
+        """Return the internal conversion mode selected in the UI."""
+
+        return CONVERSION_MODE_OPTIONS.get(
+            self.selected_conversion_mode.get(),
+            DEFAULT_CONVERSION_MODE,
+        )
+
+    @staticmethod
+    def _conversion_mode_label_for_value(value: str) -> str:
+        """Return the display label for a stored conversion mode."""
+
+        for label, option_value in CONVERSION_MODE_OPTIONS.items():
+            if option_value == value:
+                return label
+        return "Audiobook"
+
+    def _update_conversion_mode_description(self) -> None:
+        """Refresh the mode-specific guidance shown in the UI."""
+
+        if self._conversion_mode_value() == "echolesson":
+            self.conversion_mode_description.set(ECHOLESSON_MODE_DESCRIPTION)
+        else:
+            self.conversion_mode_description.set(AUDIOBOOK_MODE_DESCRIPTION)
+        self._sync_lesson_builder_visibility()
+
+    def _sync_lesson_builder_visibility(self) -> None:
+        """Show the builder foundation only for EchoLesson Mode."""
+
+        if self._conversion_mode_value() == "echolesson":
+            self.lesson_builder_card.grid()
+        else:
+            self.lesson_builder_card.grid_remove()
+
+    def _show_lesson_builder_unavailable(self) -> None:
+        """Explain that lesson structure generation is a future feature."""
+
+        messagebox.showinfo(
+            "EchoLesson Builder",
+            LESSON_BUILDER_UNAVAILABLE_MESSAGE,
+        )
 
     def _set_progress(self, percent: float) -> None:
         """Update progress value and percentage label together."""

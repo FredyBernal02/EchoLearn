@@ -4,6 +4,8 @@ Convert PDFs into natural-sounding audiobooks using Microsoft Edge TTS voices, b
 
 A cross-platform desktop app that converts selectable-text PDF files into MP3 audiobooks.
 
+EchoLearn supports two future learning experiences: Audiobook Mode and EchoLesson Mode.
+
 The app can automatically detect English and Spanish in normal selectable-text
 PDFs. It also supports simple script tags inside the PDF text for advanced
 voice control and timed pauses.
@@ -19,6 +21,7 @@ voice control and timed pauses.
 - Default language setting for uncertain untagged text
 - Voice Preview for selected voices and speech settings
 - Speech rate and volume controls
+- Conversion Mode selector for Audiobook and EchoLesson workflows
 - Auto Learning Pauses for normal PDFs without pause tags
 - Auto pause segmentation by sentence or paragraph/idea block
 - Modern dark interface with toggle switches
@@ -39,6 +42,11 @@ EchoLearn/
 │   └── echolearn.icns
 ├── main.py
 ├── requirements.txt
+├── docs/
+│   ├── conversion_modes.md
+│   ├── lesson_builder_architecture.md
+│   └── echolearn_markup_language_v1.md
+├── lesson_builder.py
 ├── README.md
 └── .gitignore
 ```
@@ -146,6 +154,18 @@ current task and percentage completed.
 The PDF section includes a clickable selection area and a **Browse PDF** button.
 Both open the same file picker and load the selected PDF.
 
+The Conversion Mode section lets you choose **Audiobook** or **EchoLesson**.
+Audiobook Mode is the default continuous-listening experience. EchoLesson Mode
+is under development and will eventually use AI to transform PDFs into
+structured lessons.
+
+See `docs/conversion_modes.md` for more about Audiobook Mode and EchoLesson
+Mode.
+
+When EchoLesson Mode is selected, the EchoLesson Builder section appears with a
+read-only Lesson Structure Preview. The **Generate Lesson Structure** button is
+a placeholder for future AI-powered lesson generation.
+
 Speech rate uses simple dropdown options: **Very Slow**, **Slow**, **Normal**,
 **Fast**, and **Very Fast**. Volume uses **Very Low**, **Low**, **Normal**,
 **High**, and **Very High**.
@@ -212,6 +232,14 @@ Future markup support will include multi-speaker dialogues with tags like
 voices.
 
 See `docs/echolearn_markup_language_v1.md` for the v1 markup documentation.
+
+## Future Feature: EchoLesson Builder
+
+EchoLearn will eventually use AI to transform normal PDFs into structured
+learning lessons before generating audio.
+
+See `docs/lesson_builder_architecture.md` for the planned builder flow and
+future responsibilities.
 
 Use `[EN]` before English text:
 
