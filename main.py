@@ -32,6 +32,8 @@ from PIL import Image, ImageTk
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+from lesson_builder import LessonBuilder
+
 APP_TITLE = "EchoLearn"
 LOGO_FILE = "echolearn_logo.png"
 DEFAULT_RATE = 0
@@ -72,10 +74,6 @@ Hi.
 [PRACTICE]
 Repeat this sentence.
 """
-LESSON_BUILDER_UNAVAILABLE_MESSAGE = (
-    "AI Lesson Builder is not available yet. Future versions will automatically "
-    "convert PDFs into EchoLearn Markup."
-)
 RATE_OPTIONS = {
     "Very Slow": -50,
     "Slow": -25,
@@ -2505,8 +2503,13 @@ class PDFAudiobookApp(tk.Tk):
         ttk.Button(
             self.lesson_builder_card,
             text="Generate Lesson Structure",
-            command=self._show_lesson_builder_unavailable,
+            command=self._generate_lesson_structure,
         ).grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        ttk.Button(
+            self.lesson_builder_card,
+            text="Copy Structure",
+            command=self._copy_lesson_structure,
+        ).grid(row=5, column=0, sticky="ew", pady=(10, 0))
 
         self.conversion_card = self._create_card(content)
         self.conversion_card.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(8, 0))
@@ -3276,13 +3279,65 @@ class PDFAudiobookApp(tk.Tk):
         else:
             self.lesson_builder_card.grid_remove()
 
-    def _show_lesson_builder_unavailable(self) -> None:
-        """Explain that lesson structure generation is a future feature."""
+    def _generate_lesson_structure(self) -> None:
+        """Generate deterministic EchoLearn Markup from the selected PDF."""
 
-        messagebox.showinfo(
-            "EchoLesson Builder",
-            LESSON_BUILDER_UNAVAILABLE_MESSAGE,
-        )
+        if not self.pdf_path.get():
+            messagebox.showerror(
+                "Missing PDF",
+                "Please select a PDF before generating lesson structure.",
+            )
+            return
+
+        pdf_path = Path(self.pdf_path.get())
+        if not pdf_path.exists():
+            messagebox.showerror(
+                "Missing PDF",
+                "The selected PDF file does not exist.",
+            )
+            return
+
+        try:
+            pdf_text = extract_text_from_pdf(pdf_path, lambda _page, _total: None)
+            generated_structure = LessonBuilder().generate_structure(pdf_text)
+        except PDFAudiobookError as exc:
+            messagebox.showerror("Could not generate lesson structure", str(exc))
+            return
+        except Exception as exc:
+            traceback.print_exc()
+            messagebox.showerror(
+                "Could not generate lesson structure",
+                "EchoLearn could not generate a lesson structure from this PDF.",
+            )
+            return
+
+        if not generated_structure:
+            messagebox.showerror(
+                "Could not generate lesson structure",
+                "No usable text was found for lesson structure generation.",
+            )
+            return
+
+        self._set_lesson_structure_preview(generated_structure)
+        self.status_text.set("Lesson structure preview generated.")
+
+    def _set_lesson_structure_preview(self, markup: str) -> None:
+        """Replace the read-only lesson structure preview text."""
+
+        self.lesson_structure_preview.configure(state=tk.NORMAL)
+        self.lesson_structure_preview.delete("1.0", tk.END)
+        self.lesson_structure_preview.insert("1.0", markup)
+        self.lesson_structure_preview.configure(state=tk.DISABLED)
+
+    def _copy_lesson_structure(self) -> None:
+        """Copy generated lesson markup from the preview to the clipboard."""
+
+        markup = self.lesson_structure_preview.get("1.0", tk.END).strip()
+        if not markup:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(markup)
+        self.status_text.set("Lesson structure copied to clipboard.")
 
     def _set_progress(self, percent: float) -> None:
         """Update progress value and percentage label together."""

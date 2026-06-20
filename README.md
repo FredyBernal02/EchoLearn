@@ -45,6 +45,7 @@ EchoLearn/
 ├── docs/
 │   ├── conversion_modes.md
 │   ├── lesson_builder_architecture.md
+│   ├── lesson_builder_v1.md
 │   └── echolearn_markup_language_v1.md
 ├── lesson_builder.py
 ├── README.md
@@ -163,8 +164,10 @@ See `docs/conversion_modes.md` for more about Audiobook Mode and EchoLesson
 Mode.
 
 When EchoLesson Mode is selected, the EchoLesson Builder section appears with a
-read-only Lesson Structure Preview. The **Generate Lesson Structure** button is
-a placeholder for future AI-powered lesson generation.
+read-only Lesson Structure Preview. The **Generate Lesson Structure** button
+creates a first-draft EchoLearn Markup structure from the selected PDF using
+simple deterministic rules. **Copy Structure** copies the preview markup to the
+clipboard.
 
 Speech rate uses simple dropdown options: **Very Slow**, **Slow**, **Normal**,
 **Fast**, and **Very Fast**. Volume uses **Very Low**, **Low**, **Normal**,
@@ -239,7 +242,8 @@ EchoLearn will eventually use AI to transform normal PDFs into structured
 learning lessons before generating audio.
 
 See `docs/lesson_builder_architecture.md` for the planned builder flow and
-future responsibilities.
+future responsibilities. See `docs/lesson_builder_v1.md` for the current
+deterministic structure generation rules and known limitations.
 
 Use `[EN]` before English text:
 
