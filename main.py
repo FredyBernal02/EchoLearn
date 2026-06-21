@@ -2172,6 +2172,9 @@ class PDFAudiobookApp(tk.Tk):
         self.conversion_mode_description = tk.StringVar(
             value=AUDIOBOOK_MODE_DESCRIPTION
         )
+        self.lesson_comparison_summary = tk.StringVar(
+            value=self._format_lesson_comparison_summary("", "")
+        )
         self.auto_detect_language = tk.BooleanVar(value=DEFAULT_AUTO_DETECT_LANGUAGE)
         self.default_untagged_language = tk.StringVar(
             value=language_name(DEFAULT_UNTAGGED_LANGUAGE)
@@ -2647,12 +2650,16 @@ class PDFAudiobookApp(tk.Tk):
 
         ttk.Label(
             self.lesson_builder_card,
-            text="Lesson Structure Preview",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(14, 0))
+            text="Preview A",
+        ).grid(row=4, column=0, sticky="w", pady=(14, 0), padx=(0, 6))
+        ttk.Label(
+            self.lesson_builder_card,
+            text="Preview B",
+        ).grid(row=4, column=1, sticky="w", pady=(14, 0), padx=(6, 0))
 
         self.lesson_structure_preview = tk.Text(
             self.lesson_builder_card,
-            height=14,
+            height=12,
             wrap=tk.WORD,
             bg="#10131a",
             fg="#eef2f8",
@@ -2664,20 +2671,62 @@ class PDFAudiobookApp(tk.Tk):
             font=("TkFixedFont", 11),
         )
         self.lesson_structure_preview.grid(
-            row=5, column=0, columnspan=2, sticky="nsew", pady=(6, 0)
+            row=5, column=0, sticky="nsew", pady=(6, 0), padx=(0, 6)
         )
         self.lesson_structure_preview.insert("1.0", LESSON_STRUCTURE_PLACEHOLDER)
+        self.lesson_structure_preview.bind(
+            "<KeyRelease>",
+            lambda _event: self._update_lesson_comparison_summary(),
+        )
+
+        self.lesson_structure_preview_b = tk.Text(
+            self.lesson_builder_card,
+            height=12,
+            wrap=tk.WORD,
+            bg="#10131a",
+            fg="#eef2f8",
+            insertbackground="#eef2f8",
+            relief=tk.FLAT,
+            bd=0,
+            padx=10,
+            pady=10,
+            font=("TkFixedFont", 11),
+        )
+        self.lesson_structure_preview_b.grid(
+            row=5, column=1, sticky="nsew", pady=(6, 0), padx=(6, 0)
+        )
+        self.lesson_structure_preview_b.bind(
+            "<KeyRelease>",
+            lambda _event: self._update_lesson_comparison_summary(),
+        )
 
         ttk.Button(
             self.lesson_builder_card,
             text="Generate Lesson Structure",
             command=self._generate_lesson_structure,
-        ).grid(row=6, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        ).grid(row=6, column=0, sticky="ew", pady=(14, 0), padx=(0, 6))
+        ttk.Button(
+            self.lesson_builder_card,
+            text="Duplicate Structure",
+            command=self._duplicate_lesson_structure,
+        ).grid(row=6, column=1, sticky="ew", pady=(14, 0), padx=(6, 0))
         ttk.Button(
             self.lesson_builder_card,
             text="Copy Structure",
             command=self._copy_lesson_structure,
         ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ttk.Label(
+            self.lesson_builder_card,
+            text="Comparison Summary",
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        ttk.Label(
+            self.lesson_builder_card,
+            textvariable=self.lesson_comparison_summary,
+            style="Muted.TLabel",
+            justify=tk.LEFT,
+            wraplength=680,
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self._update_lesson_comparison_summary()
 
         self.conversion_card = self._create_card(content)
         self.conversion_card.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(8, 0))
@@ -3559,14 +3608,30 @@ class PDFAudiobookApp(tk.Tk):
         self.lesson_structure_preview.configure(state=tk.NORMAL)
         self.lesson_structure_preview.delete("1.0", tk.END)
         self.lesson_structure_preview.insert("1.0", markup)
+        self._update_lesson_comparison_summary()
 
     def _lesson_structure_markup(self) -> str:
-        """Return the edited EchoLesson markup from the preview."""
+        """Return the edited EchoLesson markup from Preview A."""
 
         return self.lesson_structure_preview.get("1.0", tk.END).strip()
 
+    def _lesson_structure_markup_b(self) -> str:
+        """Return the edited EchoLesson markup from Preview B."""
+
+        return self.lesson_structure_preview_b.get("1.0", tk.END).strip()
+
+    def _duplicate_lesson_structure(self) -> None:
+        """Copy Preview A into Preview B for side-by-side comparison."""
+
+        markup = self._lesson_structure_markup()
+        self.lesson_structure_preview_b.configure(state=tk.NORMAL)
+        self.lesson_structure_preview_b.delete("1.0", tk.END)
+        self.lesson_structure_preview_b.insert("1.0", markup)
+        self._update_lesson_comparison_summary()
+        self.status_text.set("Preview A duplicated into Preview B.")
+
     def _copy_lesson_structure(self) -> None:
-        """Copy generated lesson markup from the preview to the clipboard."""
+        """Copy generated lesson markup from Preview A to the clipboard."""
 
         markup = self._lesson_structure_markup()
         if not markup:
@@ -3574,6 +3639,81 @@ class PDFAudiobookApp(tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(markup)
         self.status_text.set("Lesson structure copied to clipboard.")
+
+    def _update_lesson_comparison_summary(self) -> None:
+        """Refresh the simple Preview A/B structure comparison."""
+
+        self.lesson_comparison_summary.set(
+            self._format_lesson_comparison_summary(
+                self._lesson_structure_markup(),
+                self._lesson_structure_markup_b(),
+            )
+        )
+
+    @staticmethod
+    def _format_lesson_comparison_summary(
+        preview_a_markup: str,
+        preview_b_markup: str,
+    ) -> str:
+        """Return compact counts for both lesson previews."""
+
+        preview_a_counts = PDFAudiobookApp._count_lesson_markup_parts(
+            preview_a_markup
+        )
+        preview_b_counts = PDFAudiobookApp._count_lesson_markup_parts(
+            preview_b_markup
+        )
+        return (
+            "Preview A\n"
+            f"- Dialogues: {preview_a_counts['dialogues']}\n"
+            f"- Practice: {preview_a_counts['practice']}\n"
+            f"- Review: {preview_a_counts['review']}\n\n"
+            "Preview B\n"
+            f"- Dialogues: {preview_b_counts['dialogues']}\n"
+            f"- Practice: {preview_b_counts['practice']}\n"
+            f"- Review: {preview_b_counts['review']}"
+        )
+
+    @staticmethod
+    def _count_lesson_markup_parts(markup: str) -> dict[str, int]:
+        """Count key EchoLesson sections in editable markup."""
+
+        counts = {
+            "dialogues": 0,
+            "practice": 0,
+            "review": 0,
+        }
+        current_section = ""
+        previous_section = ""
+
+        for raw_line in markup.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            tag_match = ECHOLESSON_TAG_PATTERN.match(line)
+            if tag_match:
+                tag = tag_match.group(1).upper()
+                if tag in {
+                    "TITLE",
+                    "FLOW",
+                    "EXPLANATION",
+                    "DIALOG",
+                    "PRACTICE",
+                    "REVIEW",
+                }:
+                    current_section = tag
+                    if tag == "DIALOG" and previous_section != "DIALOG":
+                        counts["dialogues"] += 1
+                    if tag == "REVIEW" and previous_section != "REVIEW":
+                        counts["review"] += 1
+                    previous_section = tag
+                continue
+
+            if current_section == "PRACTICE":
+                counts["practice"] += 1
+
+        return counts
 
     def _set_progress(self, percent: float) -> None:
         """Update progress value and percentage label together."""
