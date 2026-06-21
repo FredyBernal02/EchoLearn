@@ -19,11 +19,14 @@ STRUCTURAL_TAG_PATTERN = re.compile(
     re.IGNORECASE,
 )
 REVIEW_KEYWORDS = (
-    "summary:",
-    "review:",
+    "summary",
+    "review",
     "in conclusion",
     "to summarize",
     "today we learned",
+    "today we practiced",
+    "lets review",
+    "let's review",
 )
 REVIEW_KEYWORDS_V2 = (
     "review",
@@ -56,6 +59,17 @@ PRACTICE_KEYWORDS = (
     "say",
     "fill in",
 )
+CLOSING_PHRASES = (
+    "goodbye",
+    "see you later",
+    "see you soon",
+    "thats all for today",
+    "that's all for today",
+    "that is all for today",
+    "end of lesson",
+    "great job",
+    "well done",
+)
 NON_DIALOGUE_LABELS = (
     "objective",
     "summary",
@@ -71,6 +85,7 @@ class LessonAnalysis:
 
     title_count: int = 0
     explanation_count: int = 0
+    flow_count: int = 0
     dialogue_count: int = 0
     practice_count: int = 0
     review_count: int = 0
@@ -82,6 +97,7 @@ class LessonAnalysis:
             "Lesson Analysis:\n"
             f"Title: {self.title_count}\n"
             f"Explanation: {self.explanation_count}\n"
+            f"Flow Sections: {self.flow_count}\n"
             f"Dialogues: {self.dialogue_count}\n"
             f"Practice Questions: {self.practice_count}\n"
             f"Review Sections: {self.review_count}"
@@ -141,18 +157,30 @@ class LessonBuilder:
 
         title = self._find_title(lines)
         sections: list[tuple[str, str]] = [("TITLE", title)]
-        title_used = False
 
-        for line in lines:
-            if not title_used and line == title:
-                title_used = True
-                continue
+        body_lines = self._body_lines_without_title(lines, title)
+        for index, line in enumerate(body_lines):
             sections.append(
-                (self._classify_line_v3(line), self._clean_dialogue_line(line))
+                (
+                    self._classify_line_v3(index, len(body_lines), line),
+                    self._clean_dialogue_line(line),
+                )
             )
 
         self.last_analysis = self._analyze_sections(sections)
         return self._format_sections(sections, add_speaker_tags=True)
+
+    def _body_lines_without_title(self, lines: list[str], title: str) -> list[str]:
+        """Return source lines after removing the first title occurrence."""
+
+        body_lines: list[str] = []
+        title_used = False
+        for line in lines:
+            if not title_used and line == title:
+                title_used = True
+                continue
+            body_lines.append(line)
+        return body_lines
 
     def generate_structure_with_analysis(
         self,
@@ -201,10 +229,13 @@ class LessonBuilder:
             return "EXPLANATION"
         return "FLOW"
 
-    def _classify_line_v3(self, line: str) -> str:
+    def _classify_line_v3(self, index: int, total_lines: int, line: str) -> str:
         """Classify one source line using deterministic v3 lesson rules."""
 
-        if self._looks_like_review(line):
+        if self._looks_like_review(line) or (
+            self._is_near_end(index, total_lines)
+            and self._looks_like_closing(line)
+        ):
             return "REVIEW"
         if self._looks_like_dialogue(line):
             return "DIALOG"
@@ -251,8 +282,39 @@ class LessonBuilder:
     def _looks_like_review(line: str) -> bool:
         """Return True for review or summary-like lines."""
 
-        normalized = line.strip().lower()
-        return any(keyword in normalized for keyword in REVIEW_KEYWORDS)
+        normalized = LessonBuilder._normalize_rule_text(line)
+        if normalized in {"summary", "review"}:
+            return True
+        if normalized.startswith(("summary ", "review ")):
+            return True
+        return any(
+            keyword in normalized
+            for keyword in REVIEW_KEYWORDS
+            if keyword not in {"summary", "review"}
+        )
+
+    @staticmethod
+    def _looks_like_closing(line: str) -> bool:
+        """Return True for closing phrases used at the end of lessons."""
+
+        normalized = LessonBuilder._normalize_rule_text(line)
+        return any(phrase in normalized for phrase in CLOSING_PHRASES)
+
+    @staticmethod
+    def _is_near_end(index: int, total_lines: int) -> bool:
+        """Return True when a body line appears in the ending area."""
+
+        if total_lines <= 0:
+            return False
+        return index >= min(max(total_lines - 4, 0), int(total_lines * 0.75))
+
+    @staticmethod
+    def _normalize_rule_text(line: str) -> str:
+        """Normalize punctuation enough for simple keyword rules."""
+
+        normalized = line.strip().lower().replace("’", "'")
+        normalized = normalized.rstrip(".!?:;")
+        return normalized
 
     @staticmethod
     def _looks_like_review_v2(line: str) -> bool:
@@ -363,7 +425,8 @@ class LessonBuilder:
         return LessonAnalysis(
             title_count=sum(1 for tag, _line in sections if tag == "TITLE"),
             explanation_count=LessonBuilder._count_tag_blocks(sections, "EXPLANATION"),
-            dialogue_count=sum(1 for tag, _line in sections if tag == "DIALOG"),
+            flow_count=LessonBuilder._count_tag_blocks(sections, "FLOW"),
+            dialogue_count=LessonBuilder._count_tag_blocks(sections, "DIALOG"),
             practice_count=sum(1 for tag, _line in sections if tag == "PRACTICE"),
             review_count=LessonBuilder._count_tag_blocks(sections, "REVIEW"),
         )

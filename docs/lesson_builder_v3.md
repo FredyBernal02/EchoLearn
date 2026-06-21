@@ -26,10 +26,14 @@ Generate Learning Audio
    `[SPEAKER_1]` and `[SPEAKER_2]` tags. Speaker names such as `Michael:` and
    `Ana:` are removed from the spoken content.
 4. Questions and learner prompts become `[PRACTICE]`.
-5. Summary lines become `[REVIEW]`.
+5. Summary and review lines become `[REVIEW]`.
    Examples include `Summary:`, `Review:`, `In conclusion`,
-   `To summarize`, and `Today we learned`.
-6. Consecutive lines with the same tag are grouped together. This keeps normal
+   `To summarize`, `Today we learned`, `Today we practiced`, and
+   `Let's review`.
+6. Closing lines near the end of a lesson become `[REVIEW]`.
+   Examples include `Goodbye`, `See you later`, `See you soon`,
+   `That's all for today`, `End of lesson`, `Great job`, and `Well done`.
+7. Consecutive lines with the same tag are grouped together. This keeps normal
    lesson text in a single `[FLOW]` block when possible.
 
 ## Lesson Analysis
@@ -40,7 +44,8 @@ After generation, EchoLearn creates a simple lesson analysis summary:
 Lesson Analysis:
 Title: 1
 Explanation: 1
-Dialogues: 2
+Flow Sections: 3
+Dialogues: 1
 Practice Questions: 3
 Review Sections: 1
 ```

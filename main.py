@@ -3547,6 +3547,7 @@ class PDFAudiobookApp(tk.Tk):
             "Lesson structure preview generated. "
             f"Title: {lesson_analysis.title_count}, "
             f"Explanation: {lesson_analysis.explanation_count}, "
+            f"Flow: {lesson_analysis.flow_count}, "
             f"Dialogues: {lesson_analysis.dialogue_count}, "
             f"Practice: {lesson_analysis.practice_count}, "
             f"Review: {lesson_analysis.review_count}."
