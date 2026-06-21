@@ -47,6 +47,7 @@ EchoLearn/
 │   ├── lesson_builder_architecture.md
 │   ├── lesson_builder_v1.md
 │   ├── lesson_builder_v2.md
+│   ├── lesson_builder_v3.md
 │   └── echolearn_markup_language_v1.md
 ├── lesson_builder.py
 ├── README.md
@@ -167,7 +168,7 @@ Mode.
 When EchoLesson Mode is selected, the EchoLesson Builder section appears with an
 editable Lesson Structure Preview. The **Generate Lesson Structure** button
 creates a first-draft EchoLearn Markup structure from the selected PDF using
-simple deterministic v2 rules. You can edit the markup manually, then generate
+simple deterministic v3 rules. You can edit the markup manually, then generate
 learning audio from the edited preview. **Copy Structure** copies the preview
 markup to the clipboard.
 
@@ -250,9 +251,10 @@ EchoLearn will eventually use AI to transform normal PDFs into structured
 learning lessons before generating audio.
 
 See `docs/lesson_builder_architecture.md` for the planned builder flow and
-future responsibilities. See `docs/lesson_builder_v2.md` for the current
+future responsibilities. See `docs/lesson_builder_v3.md` for the current
 deterministic structure generation rules and known limitations. The older v1
-rules are documented in `docs/lesson_builder_v1.md`.
+and v2 rules are documented in `docs/lesson_builder_v1.md` and
+`docs/lesson_builder_v2.md`.
 
 Use `[EN]` before English text:
 

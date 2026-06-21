@@ -55,8 +55,8 @@ AUDIOBOOK_MODE_DESCRIPTION = (
     "Minimal interruptions; Auto Learning Pauses are off by default."
 )
 ECHOLESSON_MODE_DESCRIPTION = (
-    "EchoLesson Mode is under development. Future versions will use AI to "
-    "transform PDFs into structured lessons."
+    "EchoLesson Mode turns PDFs into editable deterministic lesson structures "
+    "before learning audio generation."
 )
 LESSON_STRUCTURE_PLACEHOLDER = """[TITLE]
 Lesson Title
@@ -3519,7 +3519,10 @@ class PDFAudiobookApp(tk.Tk):
 
         try:
             pdf_text = extract_text_from_pdf(pdf_path, lambda _page, _total: None)
-            generated_structure = LessonBuilder().generate_structure(pdf_text)
+            lesson_builder = LessonBuilder()
+            generated_structure, lesson_analysis = (
+                lesson_builder.generate_structure_with_analysis(pdf_text)
+            )
         except PDFAudiobookError as exc:
             messagebox.showerror("Could not generate lesson structure", str(exc))
             return
@@ -3539,7 +3542,15 @@ class PDFAudiobookApp(tk.Tk):
             return
 
         self._set_lesson_structure_preview(generated_structure)
-        self.status_text.set("Lesson structure preview generated.")
+        print(lesson_analysis.format())
+        self.status_text.set(
+            "Lesson structure preview generated. "
+            f"Title: {lesson_analysis.title_count}, "
+            f"Explanation: {lesson_analysis.explanation_count}, "
+            f"Dialogues: {lesson_analysis.dialogue_count}, "
+            f"Practice: {lesson_analysis.practice_count}, "
+            f"Review: {lesson_analysis.review_count}."
+        )
 
     def _set_lesson_structure_preview(self, markup: str) -> None:
         """Replace the editable lesson structure preview text."""

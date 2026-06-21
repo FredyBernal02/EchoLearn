@@ -7,6 +7,7 @@ EchoLearn Markup without AI, cloud services, or hidden dependencies.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 
 DIALOGUE_SPEAKER_PATTERN = re.compile(
@@ -18,6 +19,13 @@ STRUCTURAL_TAG_PATTERN = re.compile(
     re.IGNORECASE,
 )
 REVIEW_KEYWORDS = (
+    "summary:",
+    "review:",
+    "in conclusion",
+    "to summarize",
+    "today we learned",
+)
+REVIEW_KEYWORDS_V2 = (
     "review",
     "summary",
     "recap",
@@ -26,6 +34,11 @@ REVIEW_KEYWORDS = (
     "in this lesson",
 )
 EXPLANATION_KEYWORDS = (
+    "today we will learn",
+    "in this lesson",
+    "this lesson covers",
+    "the objective is",
+    "objective:",
     "because",
     "means",
     "refers to",
@@ -43,15 +56,48 @@ PRACTICE_KEYWORDS = (
     "say",
     "fill in",
 )
+NON_DIALOGUE_LABELS = (
+    "objective",
+    "summary",
+    "review",
+    "recap",
+    "key takeaways",
+)
+
+
+@dataclass(frozen=True)
+class LessonAnalysis:
+    """Small quality summary for deterministic structure generation."""
+
+    title_count: int = 0
+    explanation_count: int = 0
+    dialogue_count: int = 0
+    practice_count: int = 0
+    review_count: int = 0
+
+    def format(self) -> str:
+        """Return a readable lesson analysis summary."""
+
+        return (
+            "Lesson Analysis:\n"
+            f"Title: {self.title_count}\n"
+            f"Explanation: {self.explanation_count}\n"
+            f"Dialogues: {self.dialogue_count}\n"
+            f"Practice Questions: {self.practice_count}\n"
+            f"Review Sections: {self.review_count}"
+        )
 
 
 class LessonBuilder:
     """Generate first-draft EchoLearn lesson structure without AI."""
 
-    def generate_structure(self, pdf_text: str) -> str:
-        """Return v2 EchoLearn Markup generated from extracted PDF text."""
+    def __init__(self) -> None:
+        self.last_analysis = LessonAnalysis()
 
-        return self.generate_structure_v2(pdf_text)
+    def generate_structure(self, pdf_text: str) -> str:
+        """Return v3 EchoLearn Markup generated from extracted PDF text."""
+
+        return self.generate_structure_v3(pdf_text)
 
     def generate_structure_v1(self, pdf_text: str) -> str:
         """Return the original simple v1 structure, kept for compatibility."""
@@ -85,6 +131,38 @@ class LessonBuilder:
 
         return self._format_sections(sections, add_speaker_tags=True)
 
+    def generate_structure_v3(self, pdf_text: str) -> str:
+        """Return better v3 structure using deterministic lesson rules."""
+
+        lines = [line.strip() for line in pdf_text.splitlines() if line.strip()]
+        if not lines:
+            self.last_analysis = LessonAnalysis()
+            return ""
+
+        title = self._find_title(lines)
+        sections: list[tuple[str, str]] = [("TITLE", title)]
+        title_used = False
+
+        for line in lines:
+            if not title_used and line == title:
+                title_used = True
+                continue
+            sections.append(
+                (self._classify_line_v3(line), self._clean_dialogue_line(line))
+            )
+
+        self.last_analysis = self._analyze_sections(sections)
+        return self._format_sections(sections, add_speaker_tags=True)
+
+    def generate_structure_with_analysis(
+        self,
+        pdf_text: str,
+    ) -> tuple[str, LessonAnalysis]:
+        """Return v3 markup and its lesson analysis summary."""
+
+        markup = self.generate_structure_v3(pdf_text)
+        return markup, self.last_analysis
+
     def markup_to_audio_text(self, markup: str) -> str:
         """Remove structure-only tags before sending edited markup to TTS."""
 
@@ -113,6 +191,19 @@ class LessonBuilder:
     def _classify_line_v2(self, line: str) -> str:
         """Classify one source line using small, readable v2 rules."""
 
+        if self._looks_like_review_v2(line):
+            return "REVIEW"
+        if self._looks_like_dialogue(line):
+            return "DIALOG"
+        if self._looks_like_practice(line):
+            return "PRACTICE"
+        if self._looks_like_explanation(line):
+            return "EXPLANATION"
+        return "FLOW"
+
+    def _classify_line_v3(self, line: str) -> str:
+        """Classify one source line using deterministic v3 lesson rules."""
+
         if self._looks_like_review(line):
             return "REVIEW"
         if self._looks_like_dialogue(line):
@@ -134,6 +225,9 @@ class LessonBuilder:
         """Return True when a line has simple dialogue indicators."""
 
         stripped = line.strip()
+        label = stripped.split(":", 1)[0].strip().lower() if ":" in stripped else ""
+        if label in NON_DIALOGUE_LABELS:
+            return False
         return (
             stripped.startswith(("-", "•", "*"))
             or bool(DIALOGUE_SPEAKER_PATTERN.match(stripped))
@@ -159,6 +253,13 @@ class LessonBuilder:
 
         normalized = line.strip().lower()
         return any(keyword in normalized for keyword in REVIEW_KEYWORDS)
+
+    @staticmethod
+    def _looks_like_review_v2(line: str) -> bool:
+        """Return True for review-like lines using the original v2 keywords."""
+
+        normalized = line.strip().lower()
+        return any(keyword in normalized for keyword in REVIEW_KEYWORDS_V2)
 
     @staticmethod
     def _looks_like_explanation(line: str) -> bool:
@@ -236,7 +337,45 @@ class LessonBuilder:
             else:
                 speaker_tag = "SPEAKER_1" if index % 2 == 0 else "SPEAKER_2"
 
+            spoken_line = LessonBuilder._strip_dialogue_speaker_name(line)
+            if not spoken_line:
+                continue
+
             formatted_lines.append(f"[{speaker_tag}]")
-            formatted_lines.append(line)
+            formatted_lines.append(spoken_line)
 
         return "\n".join(formatted_lines)
+
+    @staticmethod
+    def _strip_dialogue_speaker_name(line: str) -> str:
+        """Remove speaker labels such as 'Michael:' from spoken dialogue."""
+
+        stripped = line.strip()
+        speaker_match = DIALOGUE_SPEAKER_PATTERN.match(stripped)
+        if speaker_match:
+            return stripped[speaker_match.end():].strip()
+        return stripped
+
+    @staticmethod
+    def _analyze_sections(sections: list[tuple[str, str]]) -> LessonAnalysis:
+        """Count generated lesson parts for a simple quality summary."""
+
+        return LessonAnalysis(
+            title_count=sum(1 for tag, _line in sections if tag == "TITLE"),
+            explanation_count=LessonBuilder._count_tag_blocks(sections, "EXPLANATION"),
+            dialogue_count=sum(1 for tag, _line in sections if tag == "DIALOG"),
+            practice_count=sum(1 for tag, _line in sections if tag == "PRACTICE"),
+            review_count=LessonBuilder._count_tag_blocks(sections, "REVIEW"),
+        )
+
+    @staticmethod
+    def _count_tag_blocks(sections: list[tuple[str, str]], target_tag: str) -> int:
+        """Count consecutive runs for a generated section tag."""
+
+        count = 0
+        previous_tag = ""
+        for tag, _line in sections:
+            if tag == target_tag and previous_tag != target_tag:
+                count += 1
+            previous_tag = tag
+        return count
