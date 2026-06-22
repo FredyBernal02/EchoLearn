@@ -2606,16 +2606,16 @@ class PDFAudiobookApp(tk.Tk):
         self.lesson_builder_card.columnconfigure(1, weight=1)
         self._add_card_header(
             self.lesson_builder_card,
-            "EchoLesson Builder",
-            "Future AI-powered lesson generation",
+            "EchoLesson Mode",
+            "PDF -> Lesson Structure -> Learning Audio",
             "builder",
         )
 
         ttk.Label(
             self.lesson_builder_card,
             text=(
-                "Future AI-powered lesson generation. This area will display "
-                "structured EchoLearn content before audio conversion."
+                "Generate an editable lesson structure from your PDF before "
+                "creating learning audio."
             ),
             style="Muted.TLabel",
             wraplength=360,
@@ -2650,12 +2650,22 @@ class PDFAudiobookApp(tk.Tk):
 
         ttk.Label(
             self.lesson_builder_card,
-            text="Preview A",
+            text="Generated Structure",
         ).grid(row=4, column=0, sticky="w", pady=(14, 0), padx=(0, 6))
         ttk.Label(
             self.lesson_builder_card,
-            text="Preview B",
+            text="Editable / Improved Structure",
         ).grid(row=4, column=1, sticky="w", pady=(14, 0), padx=(6, 0))
+        ttk.Label(
+            self.lesson_builder_card,
+            text=(
+                "Generated Structure is created automatically. Editable "
+                "Structure is where you can improve the lesson before "
+                "generating audio."
+            ),
+            style="Muted.TLabel",
+            wraplength=680,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         self.lesson_structure_preview = tk.Text(
             self.lesson_builder_card,
@@ -2671,7 +2681,7 @@ class PDFAudiobookApp(tk.Tk):
             font=("TkFixedFont", 11),
         )
         self.lesson_structure_preview.grid(
-            row=5, column=0, sticky="nsew", pady=(6, 0), padx=(0, 6)
+            row=6, column=0, sticky="nsew", pady=(6, 0), padx=(0, 6)
         )
         self.lesson_structure_preview.insert("1.0", LESSON_STRUCTURE_PLACEHOLDER)
         self.lesson_structure_preview.bind(
@@ -2693,7 +2703,7 @@ class PDFAudiobookApp(tk.Tk):
             font=("TkFixedFont", 11),
         )
         self.lesson_structure_preview_b.grid(
-            row=5, column=1, sticky="nsew", pady=(6, 0), padx=(6, 0)
+            row=6, column=1, sticky="nsew", pady=(6, 0), padx=(6, 0)
         )
         self.lesson_structure_preview_b.bind(
             "<KeyRelease>",
@@ -2704,28 +2714,28 @@ class PDFAudiobookApp(tk.Tk):
             self.lesson_builder_card,
             text="Generate Lesson Structure",
             command=self._generate_lesson_structure,
-        ).grid(row=6, column=0, sticky="ew", pady=(14, 0), padx=(0, 6))
+        ).grid(row=7, column=0, sticky="ew", pady=(14, 0), padx=(0, 6))
         ttk.Button(
             self.lesson_builder_card,
-            text="Duplicate Structure",
+            text="Copy Generated Structure to Editable Version",
             command=self._duplicate_lesson_structure,
-        ).grid(row=6, column=1, sticky="ew", pady=(14, 0), padx=(6, 0))
+        ).grid(row=7, column=1, sticky="ew", pady=(14, 0), padx=(6, 0))
         ttk.Button(
             self.lesson_builder_card,
             text="Copy Structure",
             command=self._copy_lesson_structure,
-        ).grid(row=7, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ttk.Label(
             self.lesson_builder_card,
-            text="Comparison Summary",
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(14, 0))
+            text="Lesson Structure Summary",
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(14, 0))
         ttk.Label(
             self.lesson_builder_card,
             textvariable=self.lesson_comparison_summary,
             style="Muted.TLabel",
             justify=tk.LEFT,
             wraplength=680,
-        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self._update_lesson_comparison_summary()
 
         self.conversion_card = self._create_card(content)
@@ -3611,27 +3621,29 @@ class PDFAudiobookApp(tk.Tk):
         self._update_lesson_comparison_summary()
 
     def _lesson_structure_markup(self) -> str:
-        """Return the edited EchoLesson markup from Preview A."""
+        """Return the edited EchoLesson markup from Generated Structure."""
 
         return self.lesson_structure_preview.get("1.0", tk.END).strip()
 
     def _lesson_structure_markup_b(self) -> str:
-        """Return the edited EchoLesson markup from Preview B."""
+        """Return the edited EchoLesson markup from Editable Structure."""
 
         return self.lesson_structure_preview_b.get("1.0", tk.END).strip()
 
     def _duplicate_lesson_structure(self) -> None:
-        """Copy Preview A into Preview B for side-by-side comparison."""
+        """Copy Generated Structure into Editable Structure."""
 
         markup = self._lesson_structure_markup()
         self.lesson_structure_preview_b.configure(state=tk.NORMAL)
         self.lesson_structure_preview_b.delete("1.0", tk.END)
         self.lesson_structure_preview_b.insert("1.0", markup)
         self._update_lesson_comparison_summary()
-        self.status_text.set("Preview A duplicated into Preview B.")
+        self.status_text.set(
+            "Generated Structure copied to Editable Structure."
+        )
 
     def _copy_lesson_structure(self) -> None:
-        """Copy generated lesson markup from Preview A to the clipboard."""
+        """Copy generated lesson markup from Generated Structure."""
 
         markup = self._lesson_structure_markup()
         if not markup:
@@ -3641,7 +3653,7 @@ class PDFAudiobookApp(tk.Tk):
         self.status_text.set("Lesson structure copied to clipboard.")
 
     def _update_lesson_comparison_summary(self) -> None:
-        """Refresh the simple Preview A/B structure comparison."""
+        """Refresh the generated/editable structure comparison."""
 
         self.lesson_comparison_summary.set(
             self._format_lesson_comparison_summary(
@@ -3664,14 +3676,14 @@ class PDFAudiobookApp(tk.Tk):
             preview_b_markup
         )
         return (
-            "Preview A\n"
+            "Generated Structure:\n"
             f"- Dialogues: {preview_a_counts['dialogues']}\n"
-            f"- Practice: {preview_a_counts['practice']}\n"
-            f"- Review: {preview_a_counts['review']}\n\n"
-            "Preview B\n"
+            f"- Practice Questions: {preview_a_counts['practice']}\n"
+            f"- Review Sections: {preview_a_counts['review']}\n\n"
+            "Editable Structure:\n"
             f"- Dialogues: {preview_b_counts['dialogues']}\n"
-            f"- Practice: {preview_b_counts['practice']}\n"
-            f"- Review: {preview_b_counts['review']}"
+            f"- Practice Questions: {preview_b_counts['practice']}\n"
+            f"- Review Sections: {preview_b_counts['review']}"
         )
 
     @staticmethod
