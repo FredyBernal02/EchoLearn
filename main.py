@@ -32,7 +32,7 @@ from PIL import Image, ImageTk
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
-from lesson_builder import LessonBuilder
+from lesson_builder import LessonBuilder, analyze_lesson_structure
 
 APP_TITLE = "EchoLearn"
 LOGO_FILE = "echolearn_logo.png"
@@ -2175,6 +2175,9 @@ class PDFAudiobookApp(tk.Tk):
         self.lesson_comparison_summary = tk.StringVar(
             value=self._format_lesson_comparison_summary("", "")
         )
+        self.lesson_analysis_dashboard = tk.StringVar(
+            value="Generate a lesson structure to see analysis."
+        )
         self.auto_detect_language = tk.BooleanVar(value=DEFAULT_AUTO_DETECT_LANGUAGE)
         self.default_untagged_language = tk.StringVar(
             value=language_name(DEFAULT_UNTAGGED_LANGUAGE)
@@ -2686,7 +2689,7 @@ class PDFAudiobookApp(tk.Tk):
         self.lesson_structure_preview.insert("1.0", LESSON_STRUCTURE_PLACEHOLDER)
         self.lesson_structure_preview.bind(
             "<KeyRelease>",
-            lambda _event: self._update_lesson_comparison_summary(),
+            lambda _event: self._update_lesson_preview_insights(),
         )
 
         self.lesson_structure_preview_b = tk.Text(
@@ -2727,15 +2730,26 @@ class PDFAudiobookApp(tk.Tk):
         ).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         ttk.Label(
             self.lesson_builder_card,
-            text="Lesson Structure Summary",
+            text="Lesson Analysis",
         ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        ttk.Label(
+            self.lesson_builder_card,
+            textvariable=self.lesson_analysis_dashboard,
+            style="Muted.TLabel",
+            justify=tk.LEFT,
+            wraplength=680,
+        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(
+            self.lesson_builder_card,
+            text="Lesson Structure Summary",
+        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(14, 0))
         ttk.Label(
             self.lesson_builder_card,
             textvariable=self.lesson_comparison_summary,
             style="Muted.TLabel",
             justify=tk.LEFT,
             wraplength=680,
-        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self._update_lesson_comparison_summary()
 
         self.conversion_card = self._create_card(content)
@@ -3618,7 +3632,7 @@ class PDFAudiobookApp(tk.Tk):
         self.lesson_structure_preview.configure(state=tk.NORMAL)
         self.lesson_structure_preview.delete("1.0", tk.END)
         self.lesson_structure_preview.insert("1.0", markup)
-        self._update_lesson_comparison_summary()
+        self._update_lesson_preview_insights()
 
     def _lesson_structure_markup(self) -> str:
         """Return the edited EchoLesson markup from Generated Structure."""
@@ -3661,6 +3675,25 @@ class PDFAudiobookApp(tk.Tk):
                 self._lesson_structure_markup_b(),
             )
         )
+
+    def _update_lesson_analysis_dashboard(self) -> None:
+        """Refresh the generated structure lesson analysis dashboard."""
+
+        markup = self._lesson_structure_markup()
+        if not markup:
+            self.lesson_analysis_dashboard.set(
+                "Generate a lesson structure to see analysis."
+            )
+            return
+
+        analysis = analyze_lesson_structure(markup)
+        self.lesson_analysis_dashboard.set(analysis.format_dashboard())
+
+    def _update_lesson_preview_insights(self) -> None:
+        """Refresh lesson analysis and comparison summaries."""
+
+        self._update_lesson_analysis_dashboard()
+        self._update_lesson_comparison_summary()
 
     @staticmethod
     def _format_lesson_comparison_summary(

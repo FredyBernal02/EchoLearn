@@ -104,6 +104,193 @@ class LessonAnalysis:
         )
 
 
+@dataclass(frozen=True)
+class LessonStructureAnalysis:
+    """Detailed deterministic overview of EchoLesson markup."""
+
+    title: str = "Untitled lesson"
+    explanation_count: int = 0
+    dialogue_count: int = 0
+    practice_count: int = 0
+    flow_count: int = 0
+    review_count: int = 0
+    estimated_audio_length: str = "~1-2 minutes"
+    learning_quality: str = "Basic"
+    suggestions: tuple[str, ...] = ("No lesson structure detected",)
+
+    def format_dashboard(self) -> str:
+        """Return the lesson analysis dashboard as readable text."""
+
+        detected_lines = []
+        if self.explanation_count:
+            detected_lines.append("✓ Explanation")
+        if self.dialogue_count:
+            detected_lines.append("✓ Dialogue")
+        if self.practice_count:
+            detected_lines.append("✓ Practice Questions")
+        if self.review_count:
+            detected_lines.append("✓ Review")
+        if not detected_lines:
+            detected_lines.append("No structured learning sections detected")
+
+        return (
+            "Title:\n"
+            f"{self.title}\n\n"
+            "Sections Detected:\n"
+            + "\n".join(detected_lines)
+            + "\n\n"
+            "Counts:\n"
+            f"Explanation Sections: {self.explanation_count}\n"
+            f"Dialogues: {self.dialogue_count}\n"
+            f"Practice Questions: {self.practice_count}\n"
+            f"Flow Sections: {self.flow_count}\n"
+            f"Review Sections: {self.review_count}\n\n"
+            "Estimated Audio Length:\n"
+            f"{self.estimated_audio_length}\n\n"
+            "Learning Quality:\n"
+            f"{self.learning_quality}\n\n"
+            "Suggestions:\n"
+            + "\n".join(self.suggestions)
+        )
+
+
+def analyze_lesson_structure(markup: str) -> LessonStructureAnalysis:
+    """Analyze EchoLesson markup using deterministic quality rules."""
+
+    title = _extract_lesson_title(markup)
+    counts = count_sections(markup)
+    estimated_audio_length = estimate_audio_duration(markup)
+    learning_quality = calculate_learning_quality(counts)
+    suggestions = _build_lesson_suggestions(counts)
+
+    return LessonStructureAnalysis(
+        title=title,
+        explanation_count=counts["explanation"],
+        dialogue_count=counts["dialogue"],
+        practice_count=counts["practice"],
+        flow_count=counts["flow"],
+        review_count=counts["review"],
+        estimated_audio_length=estimated_audio_length,
+        learning_quality=learning_quality,
+        suggestions=tuple(suggestions),
+    )
+
+
+def count_sections(markup: str) -> dict[str, int]:
+    """Count major EchoLesson sections in editable markup."""
+
+    counts = {
+        "title": 0,
+        "explanation": 0,
+        "dialogue": 0,
+        "practice": 0,
+        "flow": 0,
+        "review": 0,
+    }
+    current_section = ""
+    previous_section = ""
+
+    for raw_line in markup.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        tag_match = STRUCTURAL_TAG_PATTERN.match(line)
+        if tag_match:
+            tag = tag_match.group(1).upper()
+            if tag in {"SPEAKER_1", "SPEAKER_2"}:
+                continue
+            current_section = tag
+            key = "dialogue" if tag == "DIALOG" else tag.lower()
+            if tag in {"TITLE", "EXPLANATION", "DIALOG", "FLOW", "REVIEW"}:
+                if previous_section != tag:
+                    counts[key] += 1
+            previous_section = tag
+            continue
+
+        if current_section == "PRACTICE":
+            counts["practice"] += 1
+
+    return counts
+
+
+def estimate_audio_duration(markup: str) -> str:
+    """Estimate lesson audio duration from speakable text length."""
+
+    speakable_words = _speakable_word_count(markup)
+    if speakable_words == 0:
+        return "~0 minutes"
+
+    estimated_seconds = max(60, round((speakable_words / 120) * 60))
+    if estimated_seconds <= 120:
+        return "~1-2 minutes"
+
+    minutes, seconds = divmod(estimated_seconds, 60)
+    return f"~{minutes} min {seconds:02d} sec"
+
+
+def calculate_learning_quality(counts: dict[str, int]) -> str:
+    """Calculate a simple deterministic lesson quality label."""
+
+    has_explanation = counts["explanation"] > 0
+    has_dialogue = counts["dialogue"] > 0
+    has_practice = counts["practice"] > 0
+    has_review = counts["review"] > 0
+
+    if has_explanation and has_dialogue and has_practice and has_review:
+        return "Excellent"
+    if has_explanation and has_practice:
+        return "Good"
+    return "Basic"
+
+
+def _extract_lesson_title(markup: str) -> str:
+    """Return the first non-tag line after a title tag."""
+
+    in_title = False
+    for raw_line in markup.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        tag_match = STRUCTURAL_TAG_PATTERN.match(line)
+        if tag_match:
+            in_title = tag_match.group(1).upper() == "TITLE"
+            continue
+        if in_title:
+            return line
+    return "Untitled lesson"
+
+
+def _speakable_word_count(markup: str) -> int:
+    """Count words that are not EchoLesson structure tags."""
+
+    words = 0
+    for raw_line in markup.splitlines():
+        line = raw_line.strip()
+        if not line or STRUCTURAL_TAG_PATTERN.match(line):
+            continue
+        words += len(re.findall(r"\b\w+\b", line))
+    return words
+
+
+def _build_lesson_suggestions(counts: dict[str, int]) -> list[str]:
+    """Return deterministic suggestions for missing learning elements."""
+
+    suggestions: list[str] = []
+    if counts["explanation"] == 0:
+        suggestions.append("⚠ No explanation section detected")
+    if counts["dialogue"] == 0:
+        suggestions.append("⚠ No dialogue detected")
+    if counts["practice"] == 0:
+        suggestions.append("⚠ No practice questions detected")
+    if counts["review"] == 0:
+        suggestions.append("⚠ No review section detected")
+
+    if not suggestions:
+        suggestions.append("✓ Lesson structure looks complete")
+    return suggestions
+
+
 class LessonBuilder:
     """Generate first-draft EchoLearn lesson structure without AI."""
 
