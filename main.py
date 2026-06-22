@@ -36,6 +36,7 @@ from lesson_builder import LessonBuilder, analyze_lesson_structure
 
 APP_TITLE = "EchoLearn"
 LOGO_FILE = "echolearn_logo.png"
+CUSTOM_CURSOR_ENABLED = False
 DEFAULT_RATE = 0
 DEFAULT_VOLUME = 0
 DEFAULT_ENGLISH_VOICE = "en-US-JennyNeural"
@@ -51,29 +52,11 @@ CONVERSION_MODE_OPTIONS = {
     "EchoLesson": "echolesson",
 }
 AUDIOBOOK_MODE_DESCRIPTION = (
-    "Continuous listening audio using current language detection and voices. "
-    "Minimal interruptions; Auto Learning Pauses are off by default."
+    "Convert your PDF into natural audio that is easy to listen to."
 )
 ECHOLESSON_MODE_DESCRIPTION = (
-    "EchoLesson Mode turns PDFs into editable deterministic lesson structures "
-    "before learning audio generation."
+    "Transform educational content into guided learning audio."
 )
-LESSON_STRUCTURE_PLACEHOLDER = """[TITLE]
-Lesson Title
-
-[FLOW]
-Introduction text...
-
-[DIALOG]
-[SPEAKER_1]
-Hello.
-
-[SPEAKER_2]
-Hi.
-
-[PRACTICE]
-Repeat this sentence.
-"""
 RATE_OPTIONS = {
     "Very Slow": -50,
     "Slow": -25,
@@ -1824,6 +1807,7 @@ class ToggleSwitch(tk.Frame):
         super().__init__(parent, bg=background)
         self.variable = variable
         self.background = background
+        self._hovered = False
         self.canvas = tk.Canvas(
             self,
             width=52,
@@ -1837,26 +1821,54 @@ class ToggleSwitch(tk.Frame):
             self,
             text=text,
             bg=background,
-            fg="#eef2f8",
-            font=("TkDefaultFont", 11),
+            fg="#E6F3FF",
+            font=("Inter", 11),
+            cursor="hand2",
         )
         self.label.grid(row=0, column=1, sticky="w", padx=(12, 0))
 
         self.canvas.bind("<Button-1>", self._toggle)
         self.label.bind("<Button-1>", self._toggle)
+        for widget in (self.canvas, self.label):
+            widget.bind("<Enter>", self._on_enter)
+            widget.bind("<Leave>", self._on_leave)
+        self.canvas.configure(cursor="hand2")
         self.variable.trace_add("write", lambda *_args: self._draw())
         self._draw()
 
     def _toggle(self, _event: tk.Event) -> None:
         self.variable.set(not self.variable.get())
 
+    def _on_enter(self, _event: tk.Event) -> None:
+        self._hovered = True
+        self.canvas.configure(cursor="hand2")
+        self.label.configure(cursor="hand2", fg="#FFFFFF")
+        self._draw()
+
+    def _on_leave(self, _event: tk.Event) -> None:
+        self._hovered = False
+        self.canvas.configure(cursor="hand2")
+        self.label.configure(cursor="hand2", fg="#E6F3FF")
+        self._draw()
+
     def _draw(self) -> None:
         self.canvas.delete("all")
         enabled = self.variable.get()
-        fill = "#1db954" if enabled else "#303644"
+        fill = "#14F1D9" if enabled else "#24364F"
+        outline = "#67E8F9" if enabled else "#33445F"
+        if self._hovered:
+            outline = "#FFFFFF" if enabled else "#67E8F9"
         knob_x = 28 if enabled else 4
-        self.canvas.create_oval(2, 2, 50, 26, fill=fill, outline=fill)
-        self.canvas.create_oval(knob_x, 4, knob_x + 20, 24, fill="#ffffff", outline="")
+        self.canvas.create_oval(
+            2,
+            2,
+            50,
+            26,
+            fill=fill,
+            outline=outline,
+            width=2 if self._hovered else 1,
+        )
+        self.canvas.create_oval(knob_x, 4, knob_x + 20, 24, fill="#E6F3FF", outline="")
 
 
 class AnimatedProgressBar(tk.Canvas):
@@ -1867,20 +1879,20 @@ class AnimatedProgressBar(tk.Canvas):
         parent: tk.Widget,
         *,
         variable: tk.DoubleVar,
-        background: str = "#242833",
-        accent: str = "#1db954",
+        background: str = "#142036",
+        accent: str = "#14B8A6",
     ) -> None:
         super().__init__(
             parent,
             height=16,
-            bg="#191c24",
+            bg="#0F172A",
             highlightthickness=0,
             bd=0,
         )
         self.variable = variable
         self.track_color = background
         self.accent_color = accent
-        self.highlight_color = "#64f58f"
+        self.highlight_color = "#67E8F9"
         self._offset = 0
         self._running = False
         self.variable.trace_add("write", lambda *_args: self._draw())
@@ -1913,7 +1925,18 @@ class AnimatedProgressBar(tk.Canvas):
         if fill_width <= 0:
             return
 
-        self.create_rectangle(0, 0, fill_width, height, fill=self.accent_color, outline="")
+        segments = max(1, int(fill_width / 10))
+        start = (20, 184, 166)
+        end = (34, 211, 238)
+        for index in range(segments):
+            ratio = index / max(segments - 1, 1)
+            color = "#%02x%02x%02x" % tuple(
+                round(start[channel] + (end[channel] - start[channel]) * ratio)
+                for channel in range(3)
+            )
+            x1 = fill_width * index / segments
+            x2 = fill_width * (index + 1) / segments
+            self.create_rectangle(x1, 0, x2, height, fill=color, outline="")
         if self._running:
             stripe_start = self._offset - 40
             while stripe_start < fill_width:
@@ -1943,16 +1966,21 @@ class PDFSelectArea(tk.Canvas):
     ) -> None:
         super().__init__(
             parent,
-            height=82,
-            bg="#191c24",
+            height=150,
+            bg="#0F172A",
             highlightthickness=0,
             bd=0,
             cursor="hand2",
         )
         self.browse_callback = browse_callback
         self._selected_filename = ""
+        self._hovered = False
+        self._hover_progress = 0
+        self._hover_job: str | None = None
         self.bind("<Configure>", lambda _event: self._draw())
         self.bind("<Button-1>", lambda _event: self.browse_callback())
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
         self._draw()
 
     def set_selected_file(self, filename: str) -> None:
@@ -1966,17 +1994,42 @@ class PDFSelectArea(tk.Canvas):
 
         self._draw()
 
+    def _on_enter(self, _event: tk.Event) -> None:
+        self._hovered = True
+        self._animate_hover(100)
+
+    def _on_leave(self, _event: tk.Event) -> None:
+        self._hovered = False
+        self._animate_hover(0)
+
+    def _animate_hover(self, target: int) -> None:
+        if self._hover_job is not None:
+            self.after_cancel(self._hover_job)
+            self._hover_job = None
+        if self._hover_progress == target:
+            self._draw()
+            return
+        step = 20 if target > self._hover_progress else -20
+        self._hover_progress = max(0, min(100, self._hover_progress + step))
+        self._draw()
+        self._hover_job = self.after(18, lambda: self._animate_hover(target))
+
     def _draw(self) -> None:
         self.delete("all")
         width = max(self.winfo_width(), 1)
         height = max(self.winfo_height(), 1)
-        border = "#3b4251"
-        fill = "#10131a"
-        title = "Click to choose PDF"
-        subtitle = "Browse from your computer"
+        active = bool(self._selected_filename)
+        hover_ratio = self._hover_progress / 100
+        glowing = self._hover_progress > 0 or active
+        border = "#22D3EE" if active else "#22334F"
+        if self._hover_progress:
+            border = "#67E8F9"
+        fill = "#102C3F" if glowing else "#0B1224"
+        title = "Drop or choose a PDF"
+        subtitle = "Start with a document, then EchoLearn will guide the next step."
         if self._selected_filename:
             title = self._selected_filename
-            subtitle = ""
+            subtitle = "PDF loaded successfully"
 
         self.create_rectangle(
             2,
@@ -1985,24 +2038,164 @@ class PDFSelectArea(tk.Canvas):
             height - 2,
             fill=fill,
             outline=border,
-            width=2,
+            width=3 if glowing else 2,
             dash=(8, 5),
+        )
+        if glowing:
+            inset = int(8 - (hover_ratio * 3))
+            self.create_rectangle(
+                inset,
+                inset,
+                width - inset,
+                height - inset,
+                fill="",
+                outline="#164E63",
+                width=1,
+                dash=(6, 7),
+            )
+        self.create_text(
+            width / 2,
+            height / 2 - 48,
+            text="⬆",
+            fill="#22D3EE",
+            font=("Inter", 22, "bold"),
         )
         self.create_text(
             width / 2,
-            height / 2 - 12,
+            height / 2 - 8,
             text=title,
-            fill="#eef2f8",
-            font=("TkDefaultFont", 15, "bold"),
+            fill="#E6F3FF",
+            font=("Inter", 20, "bold"),
         )
         if subtitle:
             self.create_text(
                 width / 2,
-                height / 2 + 14,
+                height / 2 + 24,
                 text=subtitle,
-                fill="#9aa4b2",
-                font=("TkDefaultFont", 10),
+                fill="#8EA4BF",
+                font=("Inter", 14),
             )
+
+
+class CustomCursorOverlay:
+    """Small premium cursor drawn in a transparent overlay window."""
+
+    transparent_color = "#010203"
+
+    def __init__(self, app: tk.Tk) -> None:
+        self.app = app
+        self.visible = False
+        self.interactive = False
+        self.text_mode = False
+        self.current_x = 0
+        self.current_y = 0
+        self.target_x = 0
+        self.target_y = 0
+        self._motion_job: str | None = None
+
+        self.window = tk.Toplevel(app)
+        self.window.withdraw()
+        self.window.overrideredirect(True)
+        self.window.configure(bg=self.transparent_color)
+        self.window.wm_attributes("-topmost", True)
+        try:
+            self.window.wm_attributes("-transparentcolor", self.transparent_color)
+        except tk.TclError:
+            try:
+                self.window.wm_attributes("-alpha", 0.88)
+            except tk.TclError:
+                pass
+
+        self.canvas = tk.Canvas(
+            self.window,
+            width=54,
+            height=54,
+            bg=self.transparent_color,
+            highlightthickness=0,
+            bd=0,
+            cursor="none",
+        )
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.window.geometry("54x54+0+0")
+        self._draw()
+
+    def show(self) -> None:
+        if self.text_mode:
+            self.hide()
+            return
+        if not self.visible:
+            self.visible = True
+            self.window.deiconify()
+        self._draw()
+
+    def hide(self) -> None:
+        self.visible = False
+        self.window.withdraw()
+
+    def destroy(self) -> None:
+        if self._motion_job is not None:
+            self.app.after_cancel(self._motion_job)
+            self._motion_job = None
+        try:
+            self.window.destroy()
+        except tk.TclError:
+            pass
+
+    def set_text_mode(self, enabled: bool) -> None:
+        self.text_mode = enabled
+        if enabled:
+            self.hide()
+        else:
+            self.show()
+
+    def set_interactive(self, enabled: bool) -> None:
+        self.interactive = enabled
+        if self.visible:
+            self._draw()
+
+    def move_to(self, root_x: int, root_y: int) -> None:
+        if self.text_mode:
+            self.hide()
+            return
+        self.target_x = root_x
+        self.target_y = root_y
+        self.show()
+        if self._motion_job is None:
+            self._animate()
+
+    def _animate(self) -> None:
+        dx = self.target_x - self.current_x
+        dy = self.target_y - self.current_y
+        self.current_x += int(dx * 0.38) if abs(dx) > 1 else dx
+        self.current_y += int(dy * 0.38) if abs(dy) > 1 else dy
+        self.window.geometry(f"54x54+{self.current_x - 27}+{self.current_y - 27}")
+        if abs(dx) > 1 or abs(dy) > 1:
+            self._motion_job = self.app.after(12, self._animate)
+        else:
+            self._motion_job = None
+
+    def _draw(self) -> None:
+        self.canvas.delete("all")
+        ring = 19 if self.interactive else 13
+        dot = 5 if self.interactive else 4
+        ring_color = "#67E8F9" if self.interactive else "#164E63"
+        dot_color = "#22D3EE" if self.interactive else "#14B8A6"
+        self.canvas.create_oval(
+            27 - ring,
+            27 - ring,
+            27 + ring,
+            27 + ring,
+            outline=ring_color,
+            width=2 if self.interactive else 1,
+        )
+        self.canvas.create_oval(
+            27 - dot,
+            27 - dot,
+            27 + dot,
+            27 + dot,
+            fill=dot_color,
+            outline="",
+        )
 
 
 class SplashScreen(tk.Toplevel):
@@ -2014,9 +2207,9 @@ class SplashScreen(tk.Toplevel):
         self.logo_image: ImageTk.PhotoImage | None = self._load_logo_image()
 
         self.overrideredirect(True)
-        self.configure(bg="#0f1117")
+        self.configure(bg="#060B1A")
         try:
-            self.attributes("-alpha", 0.98)
+            self.attributes("-alpha", 0.0)
         except tk.TclError:
             pass
         self.resizable(False, False)
@@ -2029,44 +2222,45 @@ class SplashScreen(tk.Toplevel):
             self,
             width=width,
             height=height,
-            bg="#0f1117",
+            bg="#060B1A",
             highlightthickness=0,
             bd=0,
         )
         panel.pack(fill=tk.BOTH, expand=True)
         self._draw_panel(panel, width, height)
 
-        content = tk.Frame(panel, bg="#171a22")
+        content = tk.Frame(panel, bg="#0F172A")
         panel.create_window(width / 2, height / 2, window=content)
 
         if self.logo_image is not None:
-            tk.Label(content, image=self.logo_image, bg="#171a22").pack(
+            tk.Label(content, image=self.logo_image, bg="#0F172A").pack(
                 pady=(0, 14)
             )
 
         tk.Label(
             content,
             text=APP_TITLE,
-            bg="#171a22",
-            fg="#ffffff",
-            font=("TkDefaultFont", 26, "bold"),
+            bg="#0F172A",
+            fg="#E6F3FF",
+            font=("Inter", 26, "bold"),
         ).pack()
         tk.Label(
             content,
             text="Learn by Listening",
-            bg="#171a22",
-            fg="#b8c0cc",
-            font=("TkDefaultFont", 13),
+            bg="#0F172A",
+            fg="#8EA4BF",
+            font=("Inter", 13),
         ).pack(pady=(4, 16))
         tk.Label(
             content,
             text="Loading your audio workspace...",
-            bg="#171a22",
-            fg="#76d996",
-            font=("TkDefaultFont", 10),
+            bg="#0F172A",
+            fg="#22D3EE",
+            font=("Inter", 10),
         ).pack()
 
         self.lift()
+        self._fade_in_step(0)
         self.after(2000, self._finish)
 
     def _load_logo_image(self) -> ImageTk.PhotoImage | None:
@@ -2128,10 +2322,22 @@ class SplashScreen(tk.Toplevel):
         canvas.create_polygon(
             points,
             smooth=True,
-            fill="#171a22",
-            outline="#2e3442",
+            fill="#0F172A",
+            outline="#1E3A5F",
             width=1,
         )
+        canvas.create_oval(58, 42, width - 58, height - 42, outline="#164E63", width=1)
+        canvas.create_arc(34, 18, width - 34, height - 18, start=16, extent=62, outline="#22D3EE", width=2, style=tk.ARC)
+
+    def _fade_in_step(self, step: int) -> None:
+        """Fade the splash in gently on startup."""
+
+        try:
+            self.attributes("-alpha", min(0.98, step / 12))
+        except tk.TclError:
+            return
+        if step < 12:
+            self.after(35, lambda: self._fade_in_step(step + 1))
 
     def _finish(self) -> None:
         try:
@@ -2147,8 +2353,8 @@ class PDFAudiobookApp(tk.Tk):
         super().__init__()
         self.withdraw()
         self.title(APP_TITLE)
-        self.geometry("940x680")
-        self.minsize(720, 520)
+        self.geometry("1080x760")
+        self.minsize(760, 560)
 
         self.pdf_path = tk.StringVar()
         self.output_path = tk.StringVar()
@@ -2176,7 +2382,7 @@ class PDFAudiobookApp(tk.Tk):
             value=self._format_lesson_comparison_summary("", "")
         )
         self.lesson_analysis_dashboard = tk.StringVar(
-            value="Generate a lesson structure to see analysis."
+            value="Choose a PDF in EchoLesson Mode to see a content summary."
         )
         self.auto_detect_language = tk.BooleanVar(value=DEFAULT_AUTO_DETECT_LANGUAGE)
         self.default_untagged_language = tk.StringVar(
@@ -2195,9 +2401,11 @@ class PDFAudiobookApp(tk.Tk):
         self._last_output_folder = ""
         self._is_loading_settings = False
         self.logo_image: ImageTk.PhotoImage | None = None
+        self.custom_cursor: CustomCursorOverlay | None = None
 
         self._configure_style()
         self._build_ui()
+        self._setup_custom_cursor()
         self._load_voices()
         self._load_settings()
         self._attach_settings_traces()
@@ -2205,128 +2413,137 @@ class PDFAudiobookApp(tk.Tk):
         self.after(100, self._process_worker_messages)
 
     def _configure_style(self) -> None:
-        """Apply a polished dark desktop theme."""
+        """Apply a polished futuristic dark desktop theme."""
 
         style = ttk.Style(self)
         if "clam" in style.theme_names():
             style.theme_use("clam")
 
-        self.configure(bg="#0f1117")
+        app_font = ("Inter", 11)
+        self.configure(bg="#060B1A")
 
-        style.configure("App.TFrame", background="#0f1117")
-        style.configure("App.TLabel", background="#0f1117")
-        style.configure("Card.TFrame", background="#191c24")
+        style.configure("App.TFrame", background="#060B1A")
+        style.configure("App.TLabel", background="#060B1A")
+        style.configure("Card.TFrame", background="#0F172A")
+        style.configure("Panel.TFrame", background="#0B1224")
         style.configure(
             "TLabel",
-            background="#191c24",
-            foreground="#eef2f8",
+            background="#0F172A",
+            foreground="#E6F3FF",
             padding=(0, 3),
-            font=("TkDefaultFont", 11),
+            font=("Inter", 15),
         )
         style.configure(
             "Muted.TLabel",
-            background="#191c24",
-            foreground="#9aa4b2",
-            font=("TkDefaultFont", 10),
+            background="#0F172A",
+            foreground="#8EA4BF",
+            font=("Inter", 14),
         )
         style.configure(
             "Title.TLabel",
-            background="#0f1117",
-            foreground="#ffffff",
-            font=("TkDefaultFont", 28, "bold"),
+            background="#060B1A",
+            foreground="#E6F3FF",
+            font=("Inter", 44, "bold"),
             padding=(0, 0),
         )
         style.configure(
             "Subtitle.TLabel",
-            background="#0f1117",
-            foreground="#9aa4b2",
-            font=("TkDefaultFont", 13),
+            background="#060B1A",
+            foreground="#8EA4BF",
+            font=("Inter", 17),
             padding=(0, 0),
         )
         style.configure(
             "Section.TLabel",
-            background="#191c24",
-            foreground="#ffffff",
-            font=("TkDefaultFont", 16, "bold"),
+            background="#0F172A",
+            foreground="#E6F3FF",
+            font=("Inter", 25, "bold"),
+            padding=(0, 0),
+        )
+        style.configure(
+            "Step.TLabel",
+            background="#0F172A",
+            foreground="#22D3EE",
+            font=("Inter", 13, "bold"),
             padding=(0, 0),
         )
         style.configure(
             "Status.TLabel",
-            background="#0f1117",
-            foreground="#86efac",
-            font=("TkDefaultFont", 10),
+            background="#060B1A",
+            foreground="#22C55E",
+            font=("Inter", 10),
         )
         style.configure(
             "TButton",
-            background="#2a2f3a",
-            foreground="#ffffff",
+            background="#142036",
+            foreground="#E6F3FF",
             borderwidth=0,
             focusthickness=0,
-            padding=(14, 8),
-            font=("TkDefaultFont", 11, "bold"),
+            padding=(14, 9),
+            font=("Inter", 11, "bold"),
         )
         style.map(
             "TButton",
-            background=[("disabled", "#242833"), ("active", "#3a4150")],
-            foreground=[("disabled", "#6f7785"), ("active", "#ffffff")],
+            background=[("disabled", "#0B1224"), ("active", "#1E3A5F")],
+            foreground=[("disabled", "#52637A"), ("active", "#FFFFFF")],
         )
         style.configure(
             "Primary.TButton",
-            background="#1db954",
-            foreground="#07110a",
-            padding=(20, 11),
-            font=("TkDefaultFont", 12, "bold"),
+            background="#14F1D9",
+            foreground="#031B24",
+            padding=(22, 13),
+            font=("Inter", 13, "bold"),
         )
         style.map(
             "Primary.TButton",
-            background=[("disabled", "#244431"), ("active", "#28d263")],
-            foreground=[("disabled", "#7b9083"), ("active", "#07110a")],
+            background=[("disabled", "#164E63"), ("active", "#22D3EE")],
+            foreground=[("disabled", "#8EA4BF"), ("active", "#031B24")],
         )
         style.configure(
             "TEntry",
-            fieldbackground="#10131a",
-            foreground="#eef2f8",
-            insertcolor="#eef2f8",
-            bordercolor="#303644",
-            lightcolor="#303644",
-            darkcolor="#303644",
+            fieldbackground="#0B1224",
+            foreground="#E6F3FF",
+            insertcolor="#22D3EE",
+            bordercolor="#1E3A5F",
+            lightcolor="#1E3A5F",
+            darkcolor="#1E3A5F",
             padding=(10, 8),
         )
         style.configure(
             "TCombobox",
-            fieldbackground="#10131a",
-            background="#10131a",
-            foreground="#eef2f8",
-            bordercolor="#303644",
-            arrowcolor="#eef2f8",
+            fieldbackground="#0B1224",
+            background="#142036",
+            foreground="#E6F3FF",
+            bordercolor="#1E3A5F",
+            arrowcolor="#22D3EE",
             padding=(8, 7),
         )
         style.map(
             "TCombobox",
-            fieldbackground=[("readonly", "#10131a")],
-            foreground=[("readonly", "#eef2f8")],
-            selectbackground=[("readonly", "#10131a")],
-            selectforeground=[("readonly", "#eef2f8")],
+            fieldbackground=[("readonly", "#0B1224"), ("active", "#102C3F")],
+            foreground=[("readonly", "#E6F3FF")],
+            selectbackground=[("readonly", "#0B1224")],
+            selectforeground=[("readonly", "#E6F3FF")],
         )
         style.configure(
             "TRadiobutton",
-            background="#191c24",
-            foreground="#eef2f8",
+            background="#0F172A",
+            foreground="#E6F3FF",
             padding=(0, 4),
-            font=("TkDefaultFont", 11),
+            font=("Inter", 11),
         )
         style.map(
             "TRadiobutton",
-            background=[("active", "#191c24")],
-            foreground=[("active", "#ffffff")],
+            background=[("active", "#0F172A")],
+            foreground=[("active", "#22D3EE")],
         )
         style.configure(
             "Horizontal.TProgressbar",
-            background="#1db954",
-            troughcolor="#242833",
-            bordercolor="#242833",
-            lightcolor="#1db954",
-            darkcolor="#1db954",
+            background="#14B8A6",
+            troughcolor="#142036",
+            bordercolor="#142036",
+            lightcolor="#14B8A6",
+            darkcolor="#14B8A6",
             thickness=12,
         )
 
@@ -2350,23 +2567,32 @@ class PDFAudiobookApp(tk.Tk):
     def _build_ui(self) -> None:
         """Create all visual controls."""
 
-        container = ttk.Frame(self, padding=(20, 18), style="App.TFrame")
+        container = ttk.Frame(self, padding=(28, 24), style="App.TFrame")
         container.pack(fill=tk.BOTH, expand=True)
         container.columnconfigure(0, weight=1)
         container.rowconfigure(1, weight=1)
 
         header = ttk.Frame(container, style="App.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 22))
         header.columnconfigure(1, weight=1)
 
         self.logo_image = self._load_logo_image()
         if self.logo_image is not None:
             self.iconphoto(True, self.logo_image)
-            ttk.Label(
+            self.logo_shell = tk.Frame(
                 header,
+                bg="#0F172A",
+                padx=10,
+                pady=10,
+                highlightthickness=1,
+                highlightbackground="#1E3A5F",
+            )
+            self.logo_shell.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 16))
+            tk.Label(
+                self.logo_shell,
                 image=self.logo_image,
-                style="App.TLabel",
-            ).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+                bg="#0F172A",
+            ).pack()
 
         ttk.Label(header, text=APP_TITLE, style="Title.TLabel").grid(
             row=0, column=1, sticky="w"
@@ -2374,6 +2600,17 @@ class PDFAudiobookApp(tk.Tk):
         ttk.Label(header, text="Learn by Listening", style="Subtitle.TLabel").grid(
             row=1, column=1, sticky="w", pady=(5, 0)
         )
+        self.header_orbit = tk.Canvas(
+            header,
+            width=170,
+            height=62,
+            bg="#060B1A",
+            highlightthickness=0,
+            bd=0,
+        )
+        self.header_orbit.grid(row=0, column=2, rowspan=2, sticky="e", padx=(18, 0))
+        self._draw_header_orbit()
+        self._start_logo_pulse()
 
         scroll_area = ttk.Frame(container, style="App.TFrame")
         scroll_area.grid(row=1, column=0, sticky="nsew")
@@ -2382,7 +2619,7 @@ class PDFAudiobookApp(tk.Tk):
 
         self.content_canvas = tk.Canvas(
             scroll_area,
-            bg="#0f1117",
+            bg="#060B1A",
             highlightthickness=0,
             bd=0,
         )
@@ -2398,53 +2635,159 @@ class PDFAudiobookApp(tk.Tk):
         self.content_canvas.bind("<Configure>", self._resize_scroll_content)
 
         content.columnconfigure(0, weight=1)
-        content.columnconfigure(1, weight=1)
-        content.rowconfigure(1, weight=1)
+
+        self.mode_card = self._create_card(content)
+        self.mode_card.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        self.mode_card.columnconfigure(0, weight=1)
+        self.mode_card.columnconfigure(1, weight=1)
+        self._add_card_header(
+            self.mode_card,
+            "Step 1",
+            "Choose Experience",
+            "Audiobook or structured learning audio",
+        )
+
+        self.audiobook_mode_card = self._create_mode_option(
+            self.mode_card,
+            mode_label="Audiobook",
+            title="Audiobook",
+            description="Convert PDF into natural audio.",
+        )
+        self.audiobook_mode_card.grid(
+            row=1,
+            column=0,
+            sticky="nsew",
+            pady=(18, 0),
+            padx=(0, 10),
+        )
+        self.echolesson_mode_card = self._create_mode_option(
+            self.mode_card,
+            mode_label="EchoLesson",
+            title="EchoLesson",
+            description="Transform content into learning audio.",
+        )
+        self.echolesson_mode_card.grid(
+            row=1,
+            column=1,
+            sticky="nsew",
+            pady=(18, 0),
+            padx=(10, 0),
+        )
+        self.mode_description_label = ttk.Label(
+            self.mode_card,
+            textvariable=self.conversion_mode_description,
+            style="Muted.TLabel",
+            wraplength=720,
+        )
+        self.mode_description_label.grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(16, 0),
+        )
 
         self.pdf_card = self._create_card(content)
-        self.pdf_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
+        self.pdf_card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         self.pdf_card.columnconfigure(0, weight=1)
-        self.pdf_card.columnconfigure(1, weight=1)
-        self._add_card_header(self.pdf_card, "PDF", "Source script", "pdf")
+        self.pdf_card.columnconfigure(1, weight=0)
+        self._add_card_header(
+            self.pdf_card,
+            "Step 2",
+            "Upload PDF",
+            "Choose the document you want to turn into audio",
+        )
 
         self.pdf_select_area = PDFSelectArea(
             self.pdf_card,
             browse_callback=self._choose_pdf,
         )
         self.pdf_select_area.grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(14, 10)
+            row=1, column=0, columnspan=2, sticky="ew", pady=(18, 10)
         )
         ttk.Entry(self.pdf_card, textvariable=self.pdf_path).grid(
             row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10)
         )
-        ttk.Button(self.pdf_card, text="Browse PDF", command=self._choose_pdf).grid(
+        ttk.Button(self.pdf_card, text="Choose PDF", command=self._choose_pdf).grid(
             row=3, column=0, sticky="w"
         )
         ttk.Label(self.pdf_card, textvariable=self.page_count, style="Muted.TLabel").grid(
             row=3, column=1, sticky="e"
         )
+        self.content_summary_card = tk.Frame(
+            self.pdf_card,
+            bg="#0B1224",
+            padx=18,
+            pady=16,
+            highlightthickness=1,
+            highlightbackground="#1E3A5F",
+        )
+        self.content_summary_card.grid(
+            row=4,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(16, 0),
+        )
+        self.content_summary_card.columnconfigure(0, weight=1)
+        tk.Label(
+            self.content_summary_card,
+            text="Content Summary",
+            bg="#0B1224",
+            fg="#E6F3FF",
+            font=("Inter", 18, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            self.content_summary_card,
+            textvariable=self.lesson_analysis_dashboard,
+            bg="#0B1224",
+            fg="#8EA4BF",
+            font=("Inter", 14),
+            justify=tk.LEFT,
+            wraplength=760,
+        ).grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.content_summary_card.grid_remove()
 
-        self.voices_card = self._create_card(content)
-        self.voices_card.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
-        self.voices_card.columnconfigure(1, weight=1)
-        self._add_card_header(self.voices_card, "Voices", "Bilingual narration", "voices")
+        self.settings_card = self._create_card(content)
+        self.settings_card.grid(row=2, column=0, sticky="ew", pady=(0, 14))
+        self.settings_card.columnconfigure(0, weight=1)
+        self.settings_card.columnconfigure(1, weight=1)
+        self._add_card_header(
+            self.settings_card,
+            "Step 3",
+            "Options",
+            "Only the settings for the selected experience are shown",
+        )
 
-        ttk.Label(self.voices_card, text="English voice").grid(
+        self.audiobook_settings_frame = ttk.Frame(
+            self.settings_card,
+            style="Card.TFrame",
+        )
+        self.audiobook_settings_frame.grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(18, 0),
+        )
+        self.audiobook_settings_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(self.audiobook_settings_frame, text="English voice").grid(
             row=1, column=0, sticky="w", pady=(14, 0)
         )
         self.english_voice_menu = ttk.Combobox(
-            self.voices_card,
+            self.audiobook_settings_frame,
             textvariable=self.selected_english_voice,
             state="readonly",
             values=[],
         )
         self.english_voice_menu.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=(14, 0))
 
-        ttk.Label(self.voices_card, text="Spanish voice").grid(
+        ttk.Label(self.audiobook_settings_frame, text="Spanish voice").grid(
             row=2, column=0, sticky="w", pady=(12, 0)
         )
         self.spanish_voice_menu = ttk.Combobox(
-            self.voices_card,
+            self.audiobook_settings_frame,
             textvariable=self.selected_spanish_voice,
             state="readonly",
             values=[],
@@ -2454,332 +2797,192 @@ class PDFAudiobookApp(tk.Tk):
         )
 
         self.preview_button = ttk.Button(
-            self.voices_card,
+            self.audiobook_settings_frame,
             text="Preview Voice",
             command=self._start_voice_preview,
         )
-        self.preview_button.grid(
-            row=3, column=1, sticky="w", padx=(12, 0), pady=(14, 0)
-        )
 
         ToggleSwitch(
-            self.voices_card,
+            self.audiobook_settings_frame,
             text="Auto-detect language",
             variable=self.auto_detect_language,
-            background="#191c24",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(14, 0))
+            background="#0F172A",
+        )
 
-        ttk.Label(self.voices_card, text="Default language for untagged text").grid(
-            row=5, column=0, sticky="w", pady=(12, 0)
+        self.default_language_label = ttk.Label(
+            self.audiobook_settings_frame,
+            text="Default language for untagged text",
         )
         self.default_language_menu = ttk.Combobox(
-            self.voices_card,
+            self.audiobook_settings_frame,
             textvariable=self.default_untagged_language,
             state="readonly",
             values=["English", "Spanish"],
         )
-        self.default_language_menu.grid(
-            row=5, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
-        )
+        self.default_language_menu.grid_remove()
 
-        self.learning_card = self._create_card(content)
-        self.learning_card.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
-        self.learning_card.columnconfigure(1, weight=1)
-        self._add_card_header(
-            self.learning_card,
-            "Learning Modes",
-            "Practice patterns",
-            "learning",
-        )
-
-        ttk.Label(self.learning_card, text="Speech rate").grid(
-            row=1, column=0, sticky="w", pady=(14, 0)
+        ttk.Label(self.audiobook_settings_frame, text="Speed").grid(
+            row=6, column=0, sticky="w", pady=(12, 0)
         )
         self.rate_menu = ttk.Combobox(
-            self.learning_card,
+            self.audiobook_settings_frame,
             textvariable=self.selected_rate_label,
             state="readonly",
             values=list(RATE_OPTIONS),
         )
         self.rate_menu.grid(
-            row=1, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(14, 0)
+            row=6, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
         )
         self.rate_menu.bind("<<ComboboxSelected>>", self._update_rate_from_label)
 
-        ttk.Label(self.learning_card, text="Volume").grid(
-            row=2, column=0, sticky="w", pady=(12, 0)
+        ttk.Label(self.audiobook_settings_frame, text="Volume").grid(
+            row=7, column=0, sticky="w", pady=(12, 0)
         )
         self.volume_menu = ttk.Combobox(
-            self.learning_card,
+            self.audiobook_settings_frame,
             textvariable=self.selected_volume_label,
             state="readonly",
             values=list(VOLUME_OPTIONS),
         )
         self.volume_menu.grid(
-            row=2, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(12, 0)
+            row=7, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
         )
         self.volume_menu.bind("<<ComboboxSelected>>", self._update_volume_from_label)
 
         ToggleSwitch(
-            self.learning_card,
+            self.audiobook_settings_frame,
             text="Auto Learning Pauses",
             variable=self.auto_learning_pauses,
-            background="#191c24",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(14, 0))
+            background="#0F172A",
+        )
 
-        ttk.Label(self.learning_card, text="Auto pause duration").grid(
-            row=4, column=0, sticky="w", pady=(10, 0)
+        self.auto_pause_duration_label = ttk.Label(
+            self.audiobook_settings_frame,
+            text="Auto pause duration",
         )
         self.auto_pause_menu = ttk.Combobox(
-            self.learning_card,
+            self.audiobook_settings_frame,
             textvariable=self.selected_auto_pause_label,
             state="readonly",
             values=list(AUTO_PAUSE_OPTIONS),
             width=10,
-        )
-        self.auto_pause_menu.grid(
-            row=4, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
         )
         self.auto_pause_menu.bind(
             "<<ComboboxSelected>>",
             self._update_auto_pause_from_label,
         )
 
-        ttk.Label(self.learning_card, text="Auto pause by").grid(
-            row=5, column=0, sticky="w", pady=(10, 0)
+        self.auto_pause_by_label = ttk.Label(
+            self.audiobook_settings_frame,
+            text="Auto pause by",
         )
         self.auto_pause_segmentation_menu = ttk.Combobox(
-            self.learning_card,
+            self.audiobook_settings_frame,
             textvariable=self.selected_auto_pause_segmentation,
             state="readonly",
             values=list(AUTO_PAUSE_SEGMENTATION_OPTIONS),
             width=12,
         )
-        self.auto_pause_segmentation_menu.grid(
-            row=5, column=1, sticky="w", padx=(12, 0), pady=(10, 0)
+
+        self.echolesson_settings_frame = ttk.Frame(
+            self.settings_card,
+            style="Card.TFrame",
         )
-
-        self.mode_card = self._create_card(content)
-        self.mode_card.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
-        self.mode_card.columnconfigure(0, weight=1)
-        self._add_card_header(
-            self.mode_card,
-            "Conversion Mode",
-            "Choose the listening experience",
-            "mode",
+        self.echolesson_settings_frame.grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(18, 0),
         )
-
-        ttk.Radiobutton(
-            self.mode_card,
-            text="Audiobook",
-            variable=self.selected_conversion_mode,
-            value="Audiobook",
-            command=self._update_conversion_mode_description,
-        ).grid(row=1, column=0, sticky="w", pady=(14, 0))
+        self.echolesson_settings_frame.columnconfigure(1, weight=1)
         ttk.Label(
-            self.mode_card,
-            text="Convert documents into continuous listening audio.",
-            style="Muted.TLabel",
-            wraplength=360,
-        ).grid(row=2, column=0, sticky="w", pady=(2, 0))
-
-        ttk.Radiobutton(
-            self.mode_card,
-            text="EchoLesson",
-            variable=self.selected_conversion_mode,
-            value="EchoLesson",
-            command=self._update_conversion_mode_description,
-        ).grid(row=3, column=0, sticky="w", pady=(14, 0))
-        ttk.Label(
-            self.mode_card,
-            text="Convert educational content into structured learning audio.",
-            style="Muted.TLabel",
-            wraplength=360,
-        ).grid(row=4, column=0, sticky="w", pady=(2, 0))
-        ttk.Label(
-            self.mode_card,
-            textvariable=self.conversion_mode_description,
-            style="Muted.TLabel",
-            wraplength=360,
-        ).grid(row=5, column=0, sticky="w", pady=(14, 0))
-
-        self.lesson_builder_card = self._create_card(content)
-        self.lesson_builder_card.grid(row=3, column=0, sticky="nsew", padx=(0, 8))
-        self.lesson_builder_card.columnconfigure(0, weight=1)
-        self.lesson_builder_card.columnconfigure(1, weight=1)
-        self._add_card_header(
-            self.lesson_builder_card,
-            "EchoLesson Mode",
-            "PDF -> Lesson Structure -> Learning Audio",
-            "builder",
-        )
-
-        ttk.Label(
-            self.lesson_builder_card,
-            text=(
-                "Generate an editable lesson structure from your PDF before "
-                "creating learning audio."
-            ),
-            style="Muted.TLabel",
-            wraplength=360,
-        ).grid(row=1, column=0, sticky="w", pady=(14, 0))
-        ttk.Label(
-            self.lesson_builder_card,
-            text="Speaker 1 Voice",
-        ).grid(row=2, column=0, sticky="w", pady=(14, 0))
+            self.echolesson_settings_frame,
+            text="Speaker 1 voice",
+        ).grid(row=0, column=0, sticky="w")
         self.speaker_1_voice_menu = ttk.Combobox(
-            self.lesson_builder_card,
+            self.echolesson_settings_frame,
             textvariable=self.selected_speaker_1_voice,
             state="readonly",
             values=[],
         )
         self.speaker_1_voice_menu.grid(
-            row=2, column=1, sticky="ew", padx=(12, 0), pady=(14, 0)
+            row=0, column=1, sticky="ew", padx=(12, 0)
         )
-
         ttk.Label(
-            self.lesson_builder_card,
-            text="Speaker 2 Voice",
-        ).grid(row=3, column=0, sticky="w", pady=(12, 0))
+            self.echolesson_settings_frame,
+            text="Speaker 2 voice",
+        ).grid(row=1, column=0, sticky="w", pady=(12, 0))
         self.speaker_2_voice_menu = ttk.Combobox(
-            self.lesson_builder_card,
+            self.echolesson_settings_frame,
             textvariable=self.selected_speaker_2_voice,
             state="readonly",
             values=[],
         )
         self.speaker_2_voice_menu.grid(
-            row=3, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
+            row=1, column=1, sticky="ew", padx=(12, 0), pady=(12, 0)
+        )
+        self.echo_pause_label = ttk.Label(
+            self.echolesson_settings_frame,
+            text="Practice pause",
+        )
+        self.echo_pause_menu = ttk.Combobox(
+            self.echolesson_settings_frame,
+            textvariable=self.selected_auto_pause_label,
+            state="readonly",
+            values=list(AUTO_PAUSE_OPTIONS),
+            width=10,
+        )
+        self.echo_pause_menu.bind(
+            "<<ComboboxSelected>>",
+            self._update_auto_pause_from_label,
         )
 
-        ttk.Label(
-            self.lesson_builder_card,
-            text="Generated Structure",
-        ).grid(row=4, column=0, sticky="w", pady=(14, 0), padx=(0, 6))
-        ttk.Label(
-            self.lesson_builder_card,
-            text="Editable / Improved Structure",
-        ).grid(row=4, column=1, sticky="w", pady=(14, 0), padx=(6, 0))
-        ttk.Label(
-            self.lesson_builder_card,
-            text=(
-                "Generated Structure is created automatically. Editable "
-                "Structure is where you can improve the lesson before "
-                "generating audio."
-            ),
-            style="Muted.TLabel",
-            wraplength=680,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
-
+        # Hidden internal buffers preserve EchoLesson functionality without
+        # exposing implementation markup in the consumer UI.
         self.lesson_structure_preview = tk.Text(
-            self.lesson_builder_card,
-            height=12,
-            wrap=tk.WORD,
-            bg="#10131a",
-            fg="#eef2f8",
-            insertbackground="#eef2f8",
-            relief=tk.FLAT,
-            bd=0,
-            padx=10,
-            pady=10,
-            font=("TkFixedFont", 11),
+            self,
+            height=1,
+            width=1,
         )
-        self.lesson_structure_preview.grid(
-            row=6, column=0, sticky="nsew", pady=(6, 0), padx=(0, 6)
-        )
-        self.lesson_structure_preview.insert("1.0", LESSON_STRUCTURE_PLACEHOLDER)
-        self.lesson_structure_preview.bind(
-            "<KeyRelease>",
-            lambda _event: self._update_lesson_preview_insights(),
-        )
-
         self.lesson_structure_preview_b = tk.Text(
-            self.lesson_builder_card,
-            height=12,
-            wrap=tk.WORD,
-            bg="#10131a",
-            fg="#eef2f8",
-            insertbackground="#eef2f8",
-            relief=tk.FLAT,
-            bd=0,
-            padx=10,
-            pady=10,
-            font=("TkFixedFont", 11),
+            self,
+            height=1,
+            width=1,
         )
-        self.lesson_structure_preview_b.grid(
-            row=6, column=1, sticky="nsew", pady=(6, 0), padx=(6, 0)
-        )
-        self.lesson_structure_preview_b.bind(
-            "<KeyRelease>",
-            lambda _event: self._update_lesson_comparison_summary(),
-        )
-
-        ttk.Button(
-            self.lesson_builder_card,
-            text="Generate Lesson Structure",
-            command=self._generate_lesson_structure,
-        ).grid(row=7, column=0, sticky="ew", pady=(14, 0), padx=(0, 6))
-        ttk.Button(
-            self.lesson_builder_card,
-            text="Copy Generated Structure to Editable Version",
-            command=self._duplicate_lesson_structure,
-        ).grid(row=7, column=1, sticky="ew", pady=(14, 0), padx=(6, 0))
-        ttk.Button(
-            self.lesson_builder_card,
-            text="Copy Structure",
-            command=self._copy_lesson_structure,
-        ).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Label(
-            self.lesson_builder_card,
-            text="Lesson Analysis",
-        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(14, 0))
-        ttk.Label(
-            self.lesson_builder_card,
-            textvariable=self.lesson_analysis_dashboard,
-            style="Muted.TLabel",
-            justify=tk.LEFT,
-            wraplength=680,
-        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Label(
-            self.lesson_builder_card,
-            text="Lesson Structure Summary",
-        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(14, 0))
-        ttk.Label(
-            self.lesson_builder_card,
-            textvariable=self.lesson_comparison_summary,
-            style="Muted.TLabel",
-            justify=tk.LEFT,
-            wraplength=680,
-        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self._update_lesson_comparison_summary()
 
         self.conversion_card = self._create_card(content)
-        self.conversion_card.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(8, 0))
+        self.conversion_card.grid(row=3, column=0, sticky="ew", pady=(0, 0))
         self.conversion_card.columnconfigure(0, weight=1)
         self.conversion_card.columnconfigure(1, weight=0)
         self._add_card_header(
             self.conversion_card,
-            "Conversion",
-            "Export your audiobook",
-            "conversion",
+            "Step 4",
+            "Generate Audio",
+            "Create the final listening file",
         )
 
+        ttk.Label(
+            self.conversion_card,
+            text="Save audio as",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(18, 0))
         ttk.Entry(self.conversion_card, textvariable=self.output_path).grid(
-            row=1, column=0, sticky="ew", pady=(14, 10), padx=(0, 8)
+            row=2, column=0, sticky="ew", pady=(6, 10), padx=(0, 8)
         )
         ttk.Button(
             self.conversion_card,
             text="Save As",
             command=self._choose_output,
-        ).grid(row=1, column=1, sticky="e", pady=(14, 10))
+        ).grid(row=2, column=1, sticky="e", pady=(6, 10))
 
         self.progress_bar = AnimatedProgressBar(
             self.conversion_card,
             variable=self.progress_value,
         )
-        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 8))
+        self.progress_bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 8))
 
         progress_meta = ttk.Frame(self.conversion_card, style="Card.TFrame")
-        progress_meta.grid(row=3, column=0, columnspan=2, sticky="ew")
+        progress_meta.grid(row=4, column=0, columnspan=2, sticky="ew")
         progress_meta.columnconfigure(0, weight=1)
         ttk.Label(
             progress_meta,
@@ -2796,20 +2999,20 @@ class PDFAudiobookApp(tk.Tk):
             self.conversion_card,
             textvariable=self.status_text,
             style="Muted.TLabel",
-            wraplength=300,
+            wraplength=720,
         ).grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=(6, 12)
+            row=5, column=0, columnspan=2, sticky="w", pady=(6, 12)
         )
 
         ToggleSwitch(
             self.conversion_card,
             text="Open audio automatically when finished",
             variable=self.open_audio_when_finished,
-            background="#191c24",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            background="#0F172A",
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
         action_row = ttk.Frame(self.conversion_card, style="Card.TFrame")
-        action_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        action_row.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         action_row.columnconfigure(0, weight=1)
         action_row.columnconfigure(1, weight=1)
 
@@ -2831,20 +3034,215 @@ class PDFAudiobookApp(tk.Tk):
 
         self.convert_button = ttk.Button(
             self.conversion_card,
-            text="Convert to MP3",
+            text="Generate Audio",
             style="Primary.TButton",
             command=self._start_conversion,
         )
-        self.convert_button.grid(row=7, column=0, columnspan=2, sticky="ew")
+        self.convert_button.grid(row=8, column=0, columnspan=2, sticky="ew")
 
+        self._update_lesson_comparison_summary()
+        self._refresh_mode_cards()
         self._sync_lesson_builder_visibility()
         self._bind_scroll_events(self)
+        self._apply_interactive_cursors(self)
 
-    def _create_card(self, parent: tk.Widget) -> ttk.Frame:
-        """Create a dark card container."""
+    def _create_card(self, parent: tk.Widget) -> tk.Frame:
+        """Create a premium spatial card container."""
 
-        card = ttk.Frame(parent, padding=16, style="Card.TFrame")
+        card = tk.Frame(
+            parent,
+            padx=26,
+            pady=24,
+            bg="#0F172A",
+            highlightthickness=1,
+            highlightbackground="#1E3A5F",
+            highlightcolor="#22D3EE",
+        )
         return card
+
+    def _draw_header_orbit(self) -> None:
+        """Draw a subtle spatial audio accent in the header."""
+
+        if not hasattr(self, "header_orbit"):
+            return
+        canvas = self.header_orbit
+        canvas.delete("all")
+        canvas.create_arc(16, 9, 150, 54, start=18, extent=246, outline="#164E63", width=1, style=tk.ARC)
+        canvas.create_arc(30, 15, 138, 48, start=205, extent=92, outline="#22D3EE", width=2, style=tk.ARC)
+        canvas.create_oval(116, 18, 124, 26, fill="#14F1D9", outline="")
+        canvas.create_oval(38, 39, 43, 44, fill="#F97316", outline="")
+        for index, height in enumerate((14, 24, 36, 26, 16)):
+            x = 68 + index * 8
+            y = 31 - height / 2
+            canvas.create_line(x, y, x, y + height, fill="#67E8F9", width=2)
+
+    def _start_logo_pulse(self) -> None:
+        """Start a gentle logo pulse that feels like a quiet audio wave."""
+
+        if not hasattr(self, "logo_shell"):
+            return
+        self._pulse_logo(True)
+
+    def _pulse_logo(self, active: bool) -> None:
+        if not hasattr(self, "logo_shell"):
+            return
+        self.logo_shell.configure(
+            highlightbackground="#22D3EE" if active else "#1E3A5F"
+        )
+        self.after(1800 if active else 3200, lambda: self._pulse_logo(not active))
+
+    def _create_mode_option(
+        self,
+        parent: tk.Widget,
+        *,
+        mode_label: str,
+        title: str,
+        description: str,
+    ) -> tk.Frame:
+        """Create a premium selectable mode card."""
+
+        card = tk.Frame(
+            parent,
+            bg="#0B1224",
+            padx=20,
+            pady=18,
+            cursor=self._interactive_cursor(),
+            highlightthickness=1,
+            highlightbackground="#1E3A5F",
+            highlightcolor="#22D3EE",
+        )
+        card.columnconfigure(0, weight=1)
+
+        title_label = tk.Label(
+            card,
+            text=title,
+            bg="#0B1224",
+            fg="#E6F3FF",
+            font=("Inter", 18, "bold"),
+            cursor=self._interactive_cursor(),
+        )
+        title_label.grid(row=0, column=0, sticky="w")
+
+        description_label = tk.Label(
+            card,
+            text=description,
+            bg="#0B1224",
+            fg="#8EA4BF",
+            font=("Inter", 14),
+            cursor=self._interactive_cursor(),
+            justify=tk.LEFT,
+            wraplength=320,
+        )
+        description_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        card._title_label = title_label  # type: ignore[attr-defined]
+        card._description_label = description_label  # type: ignore[attr-defined]
+        card._mode_label = mode_label  # type: ignore[attr-defined]
+        card._is_lifted = False  # type: ignore[attr-defined]
+
+        for widget in (card, title_label, description_label):
+            widget.bind(
+                "<Button-1>",
+                lambda _event, label=mode_label: self._select_conversion_mode(label),
+            )
+            widget.bind(
+                "<Enter>",
+                lambda _event, mode_card=card: self._set_mode_card_hover(mode_card, True),
+            )
+            widget.bind(
+                "<Leave>",
+                lambda _event, mode_card=card: self._set_mode_card_hover(mode_card, False),
+            )
+
+        return card
+
+    def _set_mode_card_hover(self, card: tk.Frame, hovered: bool) -> None:
+        """Apply a subtle hover state to mode cards."""
+
+        for widget in (card, card._title_label, card._description_label):  # type: ignore[attr-defined]
+            self._set_cursor(widget, self._interactive_cursor())
+        if self.custom_cursor is not None:
+            self.custom_cursor.set_interactive(hovered)
+
+        if not hovered:
+            self._restore_mode_card_lift(card)
+            self._refresh_mode_cards()
+            return
+
+        is_selected = getattr(card, "_mode_label", "") == self.selected_conversion_mode.get()
+        bg = "#103C45" if is_selected else "#102C3F"
+        border = "#67E8F9"
+        card.configure(bg=bg, highlightbackground=border)
+        card._title_label.configure(bg=bg, fg="#FFFFFF")  # type: ignore[attr-defined]
+        card._description_label.configure(bg=bg, fg="#A5F3FC")  # type: ignore[attr-defined]
+        self._lift_mode_card(card)
+
+    def _lift_mode_card(self, card: tk.Frame) -> None:
+        """Nudge a mode card upward while hovered."""
+
+        if getattr(card, "_is_lifted", False):
+            return
+        grid_info = card.grid_info()
+        pady = grid_info.get("pady", (0, 0))
+        if isinstance(pady, int):
+            normal_pady = (pady, pady)
+        else:
+            normal_pady = pady
+        card._normal_grid_pady = normal_pady  # type: ignore[attr-defined]
+        top, bottom = normal_pady
+        card.grid_configure(pady=(max(int(top) - 3, 0), int(bottom) + 3))
+        card._is_lifted = True  # type: ignore[attr-defined]
+
+    def _restore_mode_card_lift(self, card: tk.Frame) -> None:
+        """Return a hovered mode card to its normal grid position."""
+
+        if not getattr(card, "_is_lifted", False):
+            return
+        normal_pady = getattr(card, "_normal_grid_pady", None)
+        if normal_pady is not None:
+            card.grid_configure(pady=normal_pady)
+        card._is_lifted = False  # type: ignore[attr-defined]
+
+    def _select_conversion_mode(self, label: str) -> None:
+        """Select a conversion mode from the card UI."""
+
+        self.selected_conversion_mode.set(label)
+        self._update_conversion_mode_description()
+
+    def _refresh_mode_cards(self) -> None:
+        """Update the visual selected state for mode cards."""
+
+        if not hasattr(self, "audiobook_mode_card"):
+            return
+
+        selected = self.selected_conversion_mode.get()
+        for card in (self.audiobook_mode_card, self.echolesson_mode_card):
+            is_selected = getattr(card, "_mode_label", "") == selected
+            bg = "#0B2F35" if is_selected else "#0B1224"
+            border = "#22D3EE" if is_selected else "#1E3A5F"
+            title_color = "#E6F3FF"
+            body_color = "#67E8F9" if is_selected else "#8EA4BF"
+            card.configure(
+                bg=bg,
+                highlightbackground=border,
+                highlightthickness=2 if is_selected else 1,
+            )
+            card._title_label.configure(bg=bg, fg=title_color)  # type: ignore[attr-defined]
+            card._description_label.configure(bg=bg, fg=body_color)  # type: ignore[attr-defined]
+        self._refresh_mode_card_cursors()
+
+    def _refresh_mode_card_cursors(self) -> None:
+        """Keep mode-card cursors aligned with the custom cursor setting."""
+
+        if not hasattr(self, "audiobook_mode_card"):
+            return
+        for card in (self.audiobook_mode_card, self.echolesson_mode_card):
+            for widget in (
+                card,
+                card._title_label,  # type: ignore[attr-defined]
+                card._description_label,  # type: ignore[attr-defined]
+            ):
+                self._set_cursor(widget, self._interactive_cursor())
 
     def _update_scroll_region(self, _event: tk.Event) -> None:
         """Keep the scrollable content region aligned with its children."""
@@ -2854,33 +3252,246 @@ class PDFAudiobookApp(tk.Tk):
     def _resize_scroll_content(self, event: tk.Event) -> None:
         """Resize the inner content frame to the visible canvas width."""
 
-        self.content_canvas.itemconfigure(self.content_window, width=event.width)
-        self._reflow_cards(event.width)
+        self._draw_background_gradient(event.width, event.height)
+        content_width = min(max(event.width - 8, 1), 980)
+        content_x = max((event.width - content_width) // 2, 0)
+        self.content_canvas.coords(self.content_window, content_x, 0)
+        self.content_canvas.itemconfigure(self.content_window, width=content_width)
+        self.content_canvas.tag_raise(self.content_window)
+        self._reflow_cards(content_width)
+
+    def _draw_background_gradient(self, width: int, height: int) -> None:
+        """Draw a very subtle premium background gradient."""
+
+        self.content_canvas.delete("background")
+        steps = 36
+        start = (6, 11, 26)
+        end = (8, 24, 38)
+        for index in range(steps):
+            ratio = index / max(steps - 1, 1)
+            color = "#%02x%02x%02x" % tuple(
+                round(start[channel] + (end[channel] - start[channel]) * ratio)
+                for channel in range(3)
+            )
+            y1 = int((height / steps) * index)
+            y2 = int((height / steps) * (index + 1)) + 1
+            self.content_canvas.create_rectangle(
+                0,
+                y1,
+                width,
+                y2,
+                fill=color,
+                outline="",
+                tags="background",
+            )
+        self.content_canvas.tag_lower("background")
+
+    def _apply_interactive_cursors(self, widget: tk.Widget) -> None:
+        """Assign modern cursors based on each widget's interaction type."""
+
+        for child in widget.winfo_children():
+            self._prepare_widget_cursor(child)
+            self._apply_interactive_cursors(child)
+
+    def _setup_custom_cursor(self) -> None:
+        """Create and bind the optional in-app custom cursor."""
+
+        if not CUSTOM_CURSOR_ENABLED:
+            return
+        try:
+            self.custom_cursor = CustomCursorOverlay(self)
+        except tk.TclError:
+            self.custom_cursor = None
+            return
+
+        self.bind("<Enter>", self._on_app_cursor_enter, add="+")
+        self.bind("<Leave>", self._on_app_cursor_leave, add="+")
+        self.bind("<Motion>", self._on_app_cursor_motion, add="+")
+        self.custom_cursor.canvas.bind("<Motion>", self._on_app_cursor_motion, add="+")
+        self._set_cursor(self, "none")
+        self._refresh_control_cursors()
+        self._refresh_mode_card_cursors()
+
+    def _prepare_widget_cursor(self, widget: tk.Widget) -> None:
+        """Attach cursor and hover behavior to a single widget."""
+
+        if isinstance(widget, (ttk.Button, tk.Button)):
+            self._set_cursor(widget, self._cursor_for_button(widget))
+            widget.bind(
+                "<Enter>",
+                lambda _event, button=widget: self._on_button_hover(button, True),
+                add="+",
+            )
+            widget.bind(
+                "<Leave>",
+                lambda _event, button=widget: self._on_button_hover(button, False),
+                add="+",
+            )
+            return
+
+        if isinstance(widget, (ttk.Entry, tk.Entry, tk.Text)):
+            self._set_cursor(widget, "xterm")
+            widget.bind("<Enter>", self._on_text_cursor_enter, add="+")
+            widget.bind("<Leave>", self._on_text_cursor_leave, add="+")
+            return
+
+        if isinstance(widget, (ttk.Combobox, PDFSelectArea, ToggleSwitch)):
+            self._set_cursor(widget, self._interactive_cursor())
+            widget.bind("<Enter>", self._on_interactive_cursor_enter, add="+")
+            widget.bind("<Leave>", self._on_interactive_cursor_leave, add="+")
+            if isinstance(widget, ToggleSwitch):
+                self._prepare_toggle_cursor(widget)
+            return
+
+        if CUSTOM_CURSOR_ENABLED and self.custom_cursor is not None:
+            self._set_cursor(widget, "none")
+
+    def _prepare_toggle_cursor(self, toggle: ToggleSwitch) -> None:
+        """Route custom cursor behavior through toggle child widgets."""
+
+        for child in (toggle.canvas, toggle.label):
+            self._set_cursor(child, self._interactive_cursor())
+            child.bind("<Enter>", self._on_interactive_cursor_enter, add="+")
+            child.bind("<Leave>", self._on_interactive_cursor_leave, add="+")
+
+    def _on_button_hover(self, button: tk.Widget, hovered: bool) -> None:
+        """Keep button cursor feedback aligned with enabled/disabled state."""
+
+        disabled = self._widget_is_disabled(button)
+        self._set_cursor(button, self._cursor_for_button(button))
+        if self.custom_cursor is not None:
+            self.custom_cursor.set_interactive(hovered and not disabled)
+        if isinstance(button, tk.Button) and not disabled:
+            button.configure(relief=tk.RAISED if hovered else tk.FLAT)
+
+    def _refresh_control_cursors(self) -> None:
+        """Refresh cursor state after controls are enabled or disabled."""
+
+        self._refresh_control_cursors_from(self)
+
+    def _refresh_control_cursors_from(self, widget: tk.Widget) -> None:
+        for child in widget.winfo_children():
+            if isinstance(child, (ttk.Button, tk.Button)):
+                self._set_cursor(child, self._cursor_for_button(child))
+            elif isinstance(child, (ttk.Entry, tk.Entry, tk.Text)):
+                self._set_cursor(child, "xterm")
+            elif isinstance(child, (ttk.Combobox, PDFSelectArea, ToggleSwitch)):
+                self._set_cursor(child, self._interactive_cursor())
+                if isinstance(child, ToggleSwitch):
+                    for toggle_child in (child.canvas, child.label):
+                        self._set_cursor(toggle_child, self._interactive_cursor())
+            elif CUSTOM_CURSOR_ENABLED and self.custom_cursor is not None:
+                self._set_cursor(child, "none")
+            self._refresh_control_cursors_from(child)
+
+    def _cursor_for_button(self, button: tk.Widget) -> str:
+        if self._widget_is_disabled(button):
+            return "arrow"
+        return self._interactive_cursor()
+
+    def _interactive_cursor(self) -> str:
+        return "none" if CUSTOM_CURSOR_ENABLED and self.custom_cursor is not None else "hand2"
+
+    def _on_app_cursor_enter(self, event: tk.Event) -> None:
+        if self.custom_cursor is not None:
+            self.custom_cursor.move_to(event.x_root, event.y_root)
+
+    def _on_app_cursor_leave(self, event: tk.Event) -> None:
+        if self.custom_cursor is None:
+            return
+        x = event.x_root
+        y = event.y_root
+        inside = (
+            self.winfo_rootx() <= x <= self.winfo_rootx() + self.winfo_width()
+            and self.winfo_rooty() <= y <= self.winfo_rooty() + self.winfo_height()
+        )
+        if not inside:
+            self.custom_cursor.hide()
+
+    def _on_app_cursor_motion(self, event: tk.Event) -> None:
+        if self.custom_cursor is not None:
+            self.custom_cursor.move_to(event.x_root, event.y_root)
+
+    def _on_interactive_cursor_enter(self, event: tk.Event) -> None:
+        if self.custom_cursor is not None:
+            self.custom_cursor.set_text_mode(False)
+            self.custom_cursor.set_interactive(True)
+            self.custom_cursor.move_to(event.x_root, event.y_root)
+
+    def _on_interactive_cursor_leave(self, _event: tk.Event) -> None:
+        if self.custom_cursor is not None:
+            self.custom_cursor.set_interactive(False)
+
+    def _on_text_cursor_enter(self, _event: tk.Event) -> None:
+        if self.custom_cursor is not None:
+            self.custom_cursor.set_text_mode(True)
+
+    def _on_text_cursor_leave(self, _event: tk.Event) -> None:
+        if self.custom_cursor is not None:
+            self.custom_cursor.set_text_mode(False)
+
+    @staticmethod
+    def _widget_is_disabled(widget: tk.Widget) -> bool:
+        try:
+            if isinstance(widget, ttk.Widget):
+                return bool(widget.instate(["disabled"]))
+        except tk.TclError:
+            pass
+        try:
+            return str(widget.cget("state")) == tk.DISABLED
+        except tk.TclError:
+            return False
+
+    @staticmethod
+    def _set_cursor(widget: tk.Widget, cursor: str) -> None:
+        try:
+            widget.configure(cursor=cursor)
+        except tk.TclError:
+            pass
 
     def _reflow_cards(self, width: int) -> None:
-        """Switch cards between two-column and single-column layouts."""
+        """Keep the guided workflow comfortable at different widths."""
 
-        if width < 820:
-            self.pdf_card.grid_configure(row=0, column=0, padx=0, pady=(0, 12))
-            self.voices_card.grid_configure(row=1, column=0, padx=0, pady=(0, 12))
-            self.learning_card.grid_configure(row=2, column=0, padx=0, pady=(0, 12))
-            self.mode_card.grid_configure(row=3, column=0, padx=0, pady=(0, 12))
-            self.lesson_builder_card.grid_configure(
-                row=4, column=0, padx=0, pady=(0, 12)
+        if not hasattr(self, "echolesson_mode_card"):
+            return
+
+        compact = width < 760
+        if compact:
+            self.audiobook_mode_card.grid_configure(
+                row=1,
+                column=0,
+                padx=0,
+                pady=(18, 0),
             )
-            self.conversion_card.grid_configure(
-                row=5, column=0, rowspan=1, padx=0, pady=(0, 0)
+            self.echolesson_mode_card.grid_configure(
+                row=2,
+                column=0,
+                padx=0,
+                pady=(12, 0),
+            )
+            self.mode_description_label.grid_configure(
+                row=3,
+                column=0,
+                columnspan=1,
             )
         else:
-            self.pdf_card.grid_configure(row=0, column=0, padx=(0, 8), pady=(0, 12))
-            self.voices_card.grid_configure(row=0, column=1, padx=(8, 0), pady=(0, 12))
-            self.learning_card.grid_configure(row=1, column=0, padx=(0, 8), pady=(0, 12))
-            self.mode_card.grid_configure(row=2, column=0, padx=(0, 8), pady=(0, 12))
-            self.lesson_builder_card.grid_configure(
-                row=3, column=0, padx=(0, 8), pady=(0, 0)
+            self.audiobook_mode_card.grid_configure(
+                row=1,
+                column=0,
+                padx=(0, 10),
+                pady=(18, 0),
             )
-            self.conversion_card.grid_configure(
-                row=1, column=1, rowspan=3, padx=(8, 0), pady=(0, 0)
+            self.echolesson_mode_card.grid_configure(
+                row=1,
+                column=1,
+                padx=(10, 0),
+                pady=(18, 0),
+            )
+            self.mode_description_label.grid_configure(
+                row=2,
+                column=0,
+                columnspan=2,
+                pady=(16, 0),
             )
         self._sync_lesson_builder_visibility()
 
@@ -2921,38 +3532,52 @@ class PDFAudiobookApp(tk.Tk):
     def _add_card_header(
         self,
         parent: ttk.Frame,
+        step: str,
         title: str,
         subtitle: str,
-        icon_name: str,
     ) -> None:
-        """Add a section title, subtitle, and simple drawn icon."""
+        """Add a compact futuristic step header."""
 
-        icon = tk.Canvas(
-            parent,
+        title_frame = ttk.Frame(parent, style="Card.TFrame")
+        title_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
+        title_frame.columnconfigure(1, weight=1)
+
+        step_number = step.replace("Step", "").strip() or step
+        step_badge = tk.Canvas(
+            title_frame,
             width=48,
             height=48,
-            bg="#191c24",
+            bg="#0F172A",
             highlightthickness=0,
             bd=0,
         )
-        icon.grid(row=0, column=0, sticky="w", padx=(0, 14))
-        self._draw_icon(icon, icon_name)
+        step_badge.grid(row=0, column=0, rowspan=3, sticky="n", padx=(0, 14))
+        step_badge.create_oval(2, 2, 46, 46, fill="#0B2F35", outline="#22D3EE", width=2)
+        step_badge.create_oval(7, 7, 41, 41, fill="", outline="#164E63", width=1)
+        step_badge.create_text(
+            24,
+            24,
+            text=step_number,
+            fill="#E6F3FF",
+            font=("Inter", 15, "bold"),
+        )
 
-        title_frame = ttk.Frame(parent, style="Card.TFrame")
-        title_frame.grid(row=0, column=1, columnspan=2, sticky="ew")
+        ttk.Label(title_frame, text=step.upper(), style="Step.TLabel").grid(
+            row=0, column=1, sticky="w"
+        )
         ttk.Label(title_frame, text=title, style="Section.TLabel").grid(
-            row=0, column=0, sticky="w"
+            row=1, column=1, sticky="w", pady=(3, 0)
         )
         ttk.Label(title_frame, text=subtitle, style="Muted.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(2, 0)
+            row=2, column=1, sticky="w", pady=(2, 0)
         )
 
     def _draw_icon(self, canvas: tk.Canvas, icon_name: str) -> None:
         """Draw small section icons without external image dependencies."""
 
-        accent = "#1db954"
-        muted = "#9aa4b2"
-        canvas.create_oval(2, 2, 46, 46, fill="#10131a", outline="#303644", width=1)
+        accent = "#22D3EE"
+        muted = "#8EA4BF"
+        canvas.create_oval(2, 2, 46, 46, fill="#0B1224", outline="#1E3A5F", width=1)
 
         if icon_name == "pdf":
             canvas.create_rectangle(16, 11, 32, 36, outline=accent, width=2)
@@ -3186,6 +3811,8 @@ class PDFAudiobookApp(tk.Tk):
         """Save settings before closing the application."""
 
         self._save_settings()
+        if self.custom_cursor is not None:
+            self.custom_cursor.destroy()
         self.destroy()
 
     def _choose_pdf(self) -> None:
@@ -3227,6 +3854,8 @@ class PDFAudiobookApp(tk.Tk):
             self._apply_page_count(page_count)
             self.pdf_select_area.set_selected_file(pdf_path.name)
             self._save_settings()
+            if self._conversion_mode_value() == "echolesson":
+                self._generate_lesson_structure(silent=True)
 
     def _choose_output(self) -> None:
         """Ask the user where the MP3 should be saved."""
@@ -3330,7 +3959,7 @@ class PDFAudiobookApp(tk.Tk):
         """Display loaded PDF page count and ready status."""
 
         self.page_count.set(f"Pages: {count}")
-        self.status_text.set("PDF loaded. Choose the output file and convert.")
+        self.status_text.set("PDF loaded. Review options, then generate audio.")
 
     def _start_conversion(self) -> None:
         """Validate user input and start the background conversion worker."""
@@ -3354,6 +3983,7 @@ class PDFAudiobookApp(tk.Tk):
         self.convert_button.configure(state=tk.DISABLED)
         self.open_audio_button.configure(state=tk.DISABLED)
         self.reveal_mp3_button.configure(state=tk.DISABLED)
+        self._refresh_control_cursors()
         self._last_output_path = None
         self._set_progress(0)
         self.progress_bar.start()
@@ -3377,6 +4007,7 @@ class PDFAudiobookApp(tk.Tk):
         self._is_processing = True
         self.convert_button.configure(state=tk.DISABLED)
         self.preview_button.configure(state=tk.DISABLED)
+        self._refresh_control_cursors()
         self._set_progress(0)
         self.progress_bar.start()
         self.status_text.set("Generating voice preview...")
@@ -3407,6 +4038,13 @@ class PDFAudiobookApp(tk.Tk):
 
         conversion_mode = self._conversion_mode_value()
         lesson_markup = self._lesson_structure_markup()
+        if conversion_mode == "echolesson" and not lesson_markup:
+            self._generate_lesson_structure(silent=True)
+            lesson_markup = self._lesson_structure_markup()
+            if not lesson_markup:
+                raise ValueError(
+                    "EchoLearn could not analyze this PDF for learning audio."
+                )
         print(
             "GET SETTINGS: "
             f"conversion_mode={conversion_mode} "
@@ -3561,34 +4199,57 @@ class PDFAudiobookApp(tk.Tk):
             self.convert_button.configure(text="Generate Learning Audio")
         else:
             self.conversion_mode_description.set(AUDIOBOOK_MODE_DESCRIPTION)
-            self.convert_button.configure(text="Convert to MP3")
+            self.convert_button.configure(text="Generate Audio")
+        self._refresh_mode_cards()
         self._sync_lesson_builder_visibility()
+        if self._conversion_mode_value() == "echolesson" and self.pdf_path.get():
+            self._generate_lesson_structure(silent=True)
 
     def _sync_lesson_builder_visibility(self) -> None:
-        """Show the builder foundation only for EchoLesson Mode."""
+        """Show only the controls relevant to the selected experience."""
+
+        if not hasattr(self, "audiobook_settings_frame"):
+            return
 
         if self._conversion_mode_value() == "echolesson":
-            self.lesson_builder_card.grid()
+            self.audiobook_settings_frame.grid_remove()
+            self.echolesson_settings_frame.grid()
+            self._sync_content_summary_visibility()
         else:
-            self.lesson_builder_card.grid_remove()
+            self.audiobook_settings_frame.grid()
+            self.echolesson_settings_frame.grid_remove()
+            self.content_summary_card.grid_remove()
 
-    def _generate_lesson_structure(self) -> None:
+    def _sync_content_summary_visibility(self) -> None:
+        """Show the compact content summary only when it has useful content."""
+
+        if (
+            self._conversion_mode_value() == "echolesson"
+            and bool(self._lesson_structure_markup())
+        ):
+            self.content_summary_card.grid()
+        else:
+            self.content_summary_card.grid_remove()
+
+    def _generate_lesson_structure(self, *, silent: bool = False) -> bool:
         """Generate deterministic EchoLearn Markup from the selected PDF."""
 
         if not self.pdf_path.get():
-            messagebox.showerror(
-                "Missing PDF",
-                "Please select a PDF before generating lesson structure.",
-            )
-            return
+            if not silent:
+                messagebox.showerror(
+                    "Missing PDF",
+                    "Please select a PDF before generating lesson structure.",
+                )
+            return False
 
         pdf_path = Path(self.pdf_path.get())
         if not pdf_path.exists():
-            messagebox.showerror(
-                "Missing PDF",
-                "The selected PDF file does not exist.",
-            )
-            return
+            if not silent:
+                messagebox.showerror(
+                    "Missing PDF",
+                    "The selected PDF file does not exist.",
+                )
+            return False
 
         try:
             pdf_text = extract_text_from_pdf(pdf_path, lambda _page, _total: None)
@@ -3597,34 +4258,30 @@ class PDFAudiobookApp(tk.Tk):
                 lesson_builder.generate_structure_with_analysis(pdf_text)
             )
         except PDFAudiobookError as exc:
-            messagebox.showerror("Could not generate lesson structure", str(exc))
-            return
+            if not silent:
+                messagebox.showerror("Could not generate lesson structure", str(exc))
+            return False
         except Exception as exc:
             traceback.print_exc()
-            messagebox.showerror(
-                "Could not generate lesson structure",
-                "EchoLearn could not generate a lesson structure from this PDF.",
-            )
-            return
+            if not silent:
+                messagebox.showerror(
+                    "Could not generate lesson structure",
+                    "EchoLearn could not generate a lesson structure from this PDF.",
+                )
+            return False
 
         if not generated_structure:
-            messagebox.showerror(
-                "Could not generate lesson structure",
-                "No usable text was found for lesson structure generation.",
-            )
-            return
+            if not silent:
+                messagebox.showerror(
+                    "Could not generate lesson structure",
+                    "No usable text was found for lesson structure generation.",
+                )
+            return False
 
         self._set_lesson_structure_preview(generated_structure)
         print(lesson_analysis.format())
-        self.status_text.set(
-            "Lesson structure preview generated. "
-            f"Title: {lesson_analysis.title_count}, "
-            f"Explanation: {lesson_analysis.explanation_count}, "
-            f"Flow: {lesson_analysis.flow_count}, "
-            f"Dialogues: {lesson_analysis.dialogue_count}, "
-            f"Practice: {lesson_analysis.practice_count}, "
-            f"Review: {lesson_analysis.review_count}."
-        )
+        self.status_text.set("Content analyzed. Ready to generate learning audio.")
+        return True
 
     def _set_lesson_structure_preview(self, markup: str) -> None:
         """Replace the editable lesson structure preview text."""
@@ -3682,18 +4339,50 @@ class PDFAudiobookApp(tk.Tk):
         markup = self._lesson_structure_markup()
         if not markup:
             self.lesson_analysis_dashboard.set(
-                "Generate a lesson structure to see analysis."
+                "Choose a PDF in EchoLesson Mode to see a content summary."
             )
+            self._sync_content_summary_visibility()
             return
 
         analysis = analyze_lesson_structure(markup)
-        self.lesson_analysis_dashboard.set(analysis.format_dashboard())
+        self.lesson_analysis_dashboard.set(self._format_content_summary(analysis))
+        self._sync_content_summary_visibility()
 
     def _update_lesson_preview_insights(self) -> None:
         """Refresh lesson analysis and comparison summaries."""
 
         self._update_lesson_analysis_dashboard()
         self._update_lesson_comparison_summary()
+
+    @staticmethod
+    def _format_content_summary(analysis: Any) -> str:
+        """Return a friendly content summary with no internal markup."""
+
+        detected: list[str] = []
+        if analysis.dialogue_count:
+            detected.append("✓ Dialogue")
+        if analysis.practice_count:
+            detected.append("✓ Practice")
+        if analysis.review_count:
+            detected.append("✓ Review")
+        if analysis.explanation_count:
+            detected.append("✓ Explanation")
+        if not detected:
+            detected.append("No learning patterns detected yet")
+
+        return (
+            "Title:\n"
+            f"{analysis.title}\n\n"
+            "Detected:\n"
+            + "\n".join(detected)
+            + "\n\n"
+            "Estimated Length:\n"
+            f"{analysis.estimated_audio_length}\n\n"
+            "Learning Quality:\n"
+            f"{analysis.learning_quality}\n\n"
+            "Suggestions:\n"
+            + "\n".join(analysis.suggestions)
+        )
 
     @staticmethod
     def _format_lesson_comparison_summary(
@@ -3984,6 +4673,7 @@ class PDFAudiobookApp(tk.Tk):
                     self._last_output_path = path
                     self.open_audio_button.configure(state=tk.NORMAL)
                     self.reveal_mp3_button.configure(state=tk.NORMAL)
+                    self._refresh_control_cursors()
                     self.status_text.set(f"Done: {path}")
                     warning_text = ""
                     if result.warnings:
@@ -4022,6 +4712,7 @@ class PDFAudiobookApp(tk.Tk):
         self.pdf_select_area.reset_state()
         self.convert_button.configure(state=tk.NORMAL)
         self.preview_button.configure(state=tk.NORMAL)
+        self._refresh_control_cursors()
 
 
 def main() -> None:
