@@ -1,3 +1,4 @@
 pypdf
 edge-tts
 Pillow
+tkinterdnd2

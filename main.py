@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import platform
 import queue
@@ -31,6 +32,11 @@ import edge_tts
 from PIL import Image, ImageTk
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except ImportError:
+    DND_FILES = None
+    TkinterDnD = None
 
 from lesson_builder import LessonBuilder, analyze_lesson_structure
 
@@ -50,6 +56,7 @@ DEFAULT_CONVERSION_MODE = "audiobook"
 DEFAULT_THEME_PREFERENCE = "System"
 DEFAULT_REMEMBER_LAST_SELECTED_MODE = True
 DEFAULT_ECHOLESSON_GENERATION_MODE = "Standard"
+TK_ROOT_CLASS = TkinterDnD.Tk if TkinterDnD is not None else tk.Tk
 CONVERSION_MODE_OPTIONS = {
     "Audiobook": "audiobook",
     "EchoLesson": "echolesson",
@@ -1969,6 +1976,7 @@ class PDFSelectArea(tk.Canvas):
         parent: tk.Widget,
         *,
         browse_callback: Callable[[], None],
+        drop_callback: Callable[[Path], None],
     ) -> None:
         super().__init__(
             parent,
@@ -1979,14 +1987,17 @@ class PDFSelectArea(tk.Canvas):
             cursor="hand2",
         )
         self.browse_callback = browse_callback
+        self.drop_callback = drop_callback
         self._selected_filename = ""
         self._hovered = False
+        self._drag_hovered = False
         self._hover_progress = 0
         self._hover_job: str | None = None
         self.bind("<Configure>", lambda _event: self._draw())
         self.bind("<Button-1>", lambda _event: self.browse_callback())
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
+        self._setup_drag_and_drop()
         self._draw()
 
     def set_selected_file(self, filename: str) -> None:
@@ -1996,8 +2007,9 @@ class PDFSelectArea(tk.Canvas):
         self._draw()
 
     def reset_state(self) -> None:
-        """Redraw the current selection state."""
+        """Return to the empty upload state."""
 
+        self._selected_filename = ""
         self._draw()
 
     def _on_enter(self, _event: tk.Event) -> None:
@@ -2007,6 +2019,37 @@ class PDFSelectArea(tk.Canvas):
     def _on_leave(self, _event: tk.Event) -> None:
         self._hovered = False
         self._animate_hover(0)
+
+    def _setup_drag_and_drop(self) -> None:
+        """Enable native file drop events when tkinterdnd2 is installed."""
+
+        if DND_FILES is None or not hasattr(self, "drop_target_register"):
+            return
+        try:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+            self.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+            self.dnd_bind("<<Drop>>", self._on_drop)
+        except tk.TclError:
+            return
+
+    def _on_drag_enter(self, event: tk.Event) -> str:
+        self._drag_hovered = True
+        self._animate_hover(100)
+        return getattr(event, "action", "copy")
+
+    def _on_drag_leave(self, event: tk.Event) -> str:
+        self._drag_hovered = False
+        self._animate_hover(0)
+        return getattr(event, "action", "copy")
+
+    def _on_drop(self, event: tk.Event) -> str:
+        self._drag_hovered = False
+        self._animate_hover(0)
+        paths = self.tk.splitlist(getattr(event, "data", ""))
+        if paths:
+            self.drop_callback(Path(paths[0]))
+        return getattr(event, "action", "copy")
 
     def _animate_hover(self, target: int) -> None:
         if self._hover_job is not None:
@@ -2026,13 +2069,16 @@ class PDFSelectArea(tk.Canvas):
         height = max(self.winfo_height(), 1)
         active = bool(self._selected_filename)
         hover_ratio = self._hover_progress / 100
-        glowing = self._hover_progress > 0 or active
+        glowing = self._hover_progress > 0 or active or self._drag_hovered
         border = "#22D3EE" if active else "#22334F"
-        if self._hover_progress:
+        if self._hover_progress or self._drag_hovered:
             border = "#67E8F9"
         fill = "#102C3F" if glowing else "#0B1224"
-        title = "Drop or choose a PDF"
-        subtitle = "Start with a document, then EchoLearn will guide the next step."
+        title = "Drop PDF Here"
+        subtitle = "or choose a PDF to begin"
+        if self._drag_hovered:
+            title = "Drop PDF Here"
+            subtitle = "Release to load this document"
         if self._selected_filename:
             title = self._selected_filename
             subtitle = "PDF loaded successfully"
@@ -2062,9 +2108,9 @@ class PDFSelectArea(tk.Canvas):
         self.create_text(
             width / 2,
             height / 2 - 48,
-            text="⬆",
+            text="PDF",
             fill="#22D3EE",
-            font=("Inter", 22, "bold"),
+            font=("Inter", 16, "bold"),
         )
         self.create_text(
             width / 2,
@@ -2352,7 +2398,7 @@ class SplashScreen(tk.Toplevel):
             self.on_complete()
 
 
-class PDFAudiobookApp(tk.Tk):
+class PDFAudiobookApp(TK_ROOT_CLASS):
     """Main Tkinter window for the PDF audiobook converter."""
 
     def __init__(self) -> None:
@@ -2365,6 +2411,9 @@ class PDFAudiobookApp(tk.Tk):
         self.pdf_path = tk.StringVar()
         self.output_path = tk.StringVar()
         self.page_count = tk.StringVar(value="Pages: 0")
+        self.pdf_summary_name = tk.StringVar(value="No PDF selected")
+        self.pdf_summary_pages = tk.StringVar(value="Pages: --")
+        self.pdf_summary_duration = tk.StringVar(value="Approx. audio: --")
         self.status_text = tk.StringVar(value="Choose a PDF to begin.")
         self.default_output_folder = tk.StringVar()
         self.theme_preference = tk.StringVar(value=DEFAULT_THEME_PREFERENCE)
@@ -2458,14 +2507,14 @@ class PDFAudiobookApp(tk.Tk):
             "Title.TLabel",
             background="#060B1A",
             foreground="#E6F3FF",
-            font=("Inter", 44, "bold"),
+            font=("Inter", 42, "bold"),
             padding=(0, 0),
         )
         style.configure(
             "Subtitle.TLabel",
             background="#060B1A",
             foreground="#8EA4BF",
-            font=("Inter", 17),
+            font=("Inter", 16),
             padding=(0, 0),
         )
         style.configure(
@@ -2506,8 +2555,8 @@ class PDFAudiobookApp(tk.Tk):
             "Primary.TButton",
             background="#14F1D9",
             foreground="#031B24",
-            padding=(22, 13),
-            font=("Inter", 13, "bold"),
+            padding=(28, 16),
+            font=("Inter", 15, "bold"),
         )
         style.map(
             "Primary.TButton",
@@ -2603,51 +2652,69 @@ class PDFAudiobookApp(tk.Tk):
         container.rowconfigure(1, weight=1)
 
         header = ttk.Frame(container, style="App.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 22))
-        header.columnconfigure(1, weight=1)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 28))
+        header.columnconfigure(0, weight=1)
 
         self.logo_image = self._load_logo_image()
         if self.logo_image is not None:
             self.iconphoto(True, self.logo_image)
-            self.logo_shell = tk.Frame(
-                header,
-                bg="#0F172A",
-                padx=10,
-                pady=10,
-                highlightthickness=1,
-                highlightbackground="#1E3A5F",
-            )
-            self.logo_shell.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 16))
-            tk.Label(
-                self.logo_shell,
-                image=self.logo_image,
-                bg="#0F172A",
-            ).pack()
 
-        ttk.Label(header, text=APP_TITLE, style="Title.TLabel").grid(
-            row=0, column=1, sticky="w"
-        )
-        ttk.Label(header, text="Learn by Listening", style="Subtitle.TLabel").grid(
-            row=1, column=1, sticky="w", pady=(5, 0)
-        )
-        header_actions = ttk.Frame(header, style="App.TFrame")
-        header_actions.grid(row=0, column=2, rowspan=2, sticky="e", padx=(18, 0))
-        ttk.Button(
-            header_actions,
-            text="Settings",
-            command=self._open_settings_modal,
-        ).grid(row=0, column=0, sticky="e", pady=(0, 8))
-        self.header_orbit = tk.Canvas(
-            header_actions,
-            width=170,
-            height=62,
+        brand_panel = tk.Frame(header, bg="#060B1A")
+        brand_panel.grid(row=0, column=0, sticky="ew", padx=(0, 18))
+        brand_panel.columnconfigure(0, weight=1)
+
+        brand_text = tk.Frame(brand_panel, bg="#060B1A")
+        brand_text.grid(row=0, column=0, sticky="w")
+        brand_text.columnconfigure(1, weight=1)
+
+        self.brand_glow_canvas = tk.Canvas(
+            brand_text,
+            width=26,
+            height=58,
             bg="#060B1A",
             highlightthickness=0,
             bd=0,
         )
-        self.header_orbit.grid(row=1, column=0, sticky="e")
-        self._draw_header_orbit()
-        self._start_logo_pulse()
+        self.brand_glow_canvas.grid(row=0, column=0, sticky="w")
+        self.brand_title_label = tk.Label(
+            brand_text,
+            text=APP_TITLE,
+            bg="#060B1A",
+            fg="#E6F3FF",
+            font=("Inter", 42, "bold"),
+        )
+        self.brand_title_label.grid(row=0, column=1, sticky="w")
+        tk.Label(
+            brand_text,
+            text="Learn by Listening",
+            bg="#060B1A",
+            fg="#8EA4BF",
+            font=("Inter", 16),
+        ).grid(row=1, column=1, sticky="w", pady=(4, 0))
+
+        self.brand_mark_canvas = tk.Canvas(
+            brand_panel,
+            width=190,
+            height=96,
+            bg="#060B1A",
+            highlightthickness=0,
+            bd=0,
+        )
+        self.brand_mark_canvas.grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(24, 0),
+        )
+        header_actions = ttk.Frame(header, style="App.TFrame")
+        header_actions.grid(row=0, column=1, sticky="ne")
+        ttk.Button(
+            header_actions,
+            text="Settings",
+            command=self._open_settings_modal,
+        ).grid(row=0, column=0, sticky="e")
+        self._brand_pulse_step = 0
+        self._animate_brand_header()
 
         scroll_area = ttk.Frame(container, style="App.TFrame")
         scroll_area.grid(row=1, column=0, sticky="nsew")
@@ -2677,18 +2744,17 @@ class PDFAudiobookApp(tk.Tk):
         self.mode_card.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         self.mode_card.columnconfigure(0, weight=1)
         self.mode_card.columnconfigure(1, weight=1)
-        self._add_card_header(
+        self._add_section_header(
             self.mode_card,
-            "Step 1",
-            "Choose Experience",
-            "Audiobook or structured learning audio",
+            "Experience",
+            "Choose how this PDF should become audio.",
         )
 
         self.audiobook_mode_card = self._create_mode_option(
             self.mode_card,
             mode_label="Audiobook",
             title="Audiobook",
-            description="Convert PDF into natural audio.",
+            description="Clean listening audio.",
         )
         self.audiobook_mode_card.grid(
             row=1,
@@ -2701,7 +2767,7 @@ class PDFAudiobookApp(tk.Tk):
             self.mode_card,
             mode_label="EchoLesson",
             title="EchoLesson",
-            description="Transform content into learning audio.",
+            description="Guided learning audio.",
         )
         self.echolesson_mode_card.grid(
             row=1,
@@ -2710,48 +2776,35 @@ class PDFAudiobookApp(tk.Tk):
             pady=(18, 0),
             padx=(10, 0),
         )
-        self.mode_description_label = ttk.Label(
-            self.mode_card,
-            textvariable=self.conversion_mode_description,
-            style="Muted.TLabel",
-            wraplength=720,
-        )
-        self.mode_description_label.grid(
-            row=2,
-            column=0,
-            columnspan=2,
-            sticky="w",
-            pady=(16, 0),
-        )
-
         self.pdf_card = self._create_card(content)
         self.pdf_card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         self.pdf_card.columnconfigure(0, weight=1)
         self.pdf_card.columnconfigure(1, weight=0)
-        self._add_card_header(
+        self._add_section_header(
             self.pdf_card,
-            "Step 2",
             "Upload PDF",
-            "Choose the document you want to turn into audio",
+            "Start with the document you want to learn from.",
         )
 
         self.pdf_select_area = PDFSelectArea(
             self.pdf_card,
             browse_callback=self._choose_pdf,
+            drop_callback=self._load_pdf,
         )
         self.pdf_select_area.grid(
             row=1, column=0, columnspan=2, sticky="ew", pady=(18, 10)
         )
-        ttk.Entry(self.pdf_card, textvariable=self.pdf_path).grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10)
+        self.choose_pdf_button = ttk.Button(
+            self.pdf_card,
+            text="Choose PDF",
+            command=self._choose_pdf,
         )
-        ttk.Button(self.pdf_card, text="Choose PDF", command=self._choose_pdf).grid(
-            row=3, column=0, sticky="w"
+        self.choose_pdf_button.grid(
+            row=2,
+            column=0,
+            sticky="w",
         )
-        ttk.Label(self.pdf_card, textvariable=self.page_count, style="Muted.TLabel").grid(
-            row=3, column=1, sticky="e"
-        )
-        self.content_summary_card = tk.Frame(
+        self.pdf_summary_card = tk.Frame(
             self.pdf_card,
             bg="#0B1224",
             padx=18,
@@ -2759,31 +2812,51 @@ class PDFAudiobookApp(tk.Tk):
             highlightthickness=1,
             highlightbackground="#1E3A5F",
         )
-        self.content_summary_card.grid(
-            row=4,
+        self.pdf_summary_card.grid(
+            row=1,
             column=0,
             columnspan=2,
             sticky="ew",
-            pady=(16, 0),
+            pady=(18, 10),
         )
-        self.content_summary_card.columnconfigure(0, weight=1)
+        self.pdf_summary_card.columnconfigure(0, weight=0)
+        self.pdf_summary_card.columnconfigure(1, weight=1)
         tk.Label(
-            self.content_summary_card,
-            text="Content Summary",
+            self.pdf_summary_card,
+            text="✓",
+            bg="#0B1224",
+            fg="#22C55E",
+            font=("Inter", 22, "bold"),
+        ).grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 12))
+        tk.Label(
+            self.pdf_summary_card,
+            textvariable=self.pdf_summary_name,
             bg="#0B1224",
             fg="#E6F3FF",
             font=("Inter", 18, "bold"),
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=0, column=1, sticky="w")
         tk.Label(
-            self.content_summary_card,
-            textvariable=self.lesson_analysis_dashboard,
+            self.pdf_summary_card,
+            textvariable=self.pdf_summary_pages,
+            bg="#0B1224",
+            fg="#67E8F9",
+            font=("Inter", 13, "bold"),
+        ).grid(row=1, column=1, sticky="w", pady=(8, 0))
+        tk.Label(
+            self.pdf_summary_card,
+            textvariable=self.pdf_summary_duration,
             bg="#0B1224",
             fg="#8EA4BF",
-            font=("Inter", 14),
-            justify=tk.LEFT,
-            wraplength=760,
-        ).grid(row=1, column=0, sticky="w", pady=(10, 0))
-        self.content_summary_card.grid_remove()
+            font=("Inter", 13),
+        ).grid(row=2, column=1, sticky="w", pady=(4, 0))
+        tk.Label(
+            self.pdf_summary_card,
+            text="Ready for conversion.",
+            bg="#0B1224",
+            fg="#22C55E",
+            font=("Inter", 13, "bold"),
+        ).grid(row=3, column=1, sticky="w", pady=(10, 0))
+        self.pdf_summary_card.grid_remove()
 
         # Hidden internal buffers preserve EchoLesson functionality without
         # exposing implementation markup in the consumer UI.
@@ -2802,34 +2875,20 @@ class PDFAudiobookApp(tk.Tk):
         self.conversion_card.grid(row=2, column=0, sticky="ew", pady=(0, 0))
         self.conversion_card.columnconfigure(0, weight=1)
         self.conversion_card.columnconfigure(1, weight=0)
-        self._add_card_header(
+        self._add_section_header(
             self.conversion_card,
-            "Step 3",
             "Generate Audio",
-            "Create the final listening file",
+            "Create the MP3 and start learning.",
         )
-
-        ttk.Label(
-            self.conversion_card,
-            text="Save audio as",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(18, 0))
-        ttk.Entry(self.conversion_card, textvariable=self.output_path).grid(
-            row=2, column=0, sticky="ew", pady=(6, 10), padx=(0, 8)
-        )
-        ttk.Button(
-            self.conversion_card,
-            text="Save As",
-            command=self._choose_output,
-        ).grid(row=2, column=1, sticky="e", pady=(6, 10))
 
         self.progress_bar = AnimatedProgressBar(
             self.conversion_card,
             variable=self.progress_value,
         )
-        self.progress_bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 8))
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(18, 8))
 
         progress_meta = ttk.Frame(self.conversion_card, style="Card.TFrame")
-        progress_meta.grid(row=4, column=0, columnspan=2, sticky="ew")
+        progress_meta.grid(row=2, column=0, columnspan=2, sticky="ew")
         progress_meta.columnconfigure(0, weight=1)
         ttk.Label(
             progress_meta,
@@ -2848,7 +2907,7 @@ class PDFAudiobookApp(tk.Tk):
             style="Muted.TLabel",
             wraplength=720,
         ).grid(
-            row=5, column=0, columnspan=2, sticky="w", pady=(6, 12)
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 12)
         )
 
         ToggleSwitch(
@@ -2856,10 +2915,34 @@ class PDFAudiobookApp(tk.Tk):
             text="Open audio automatically when finished",
             variable=self.open_audio_when_finished,
             background="#0F172A",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        self.generation_success_card = tk.Frame(
+            self.conversion_card,
+            bg="#0B2F35",
+            padx=16,
+            pady=12,
+            highlightthickness=1,
+            highlightbackground="#22C55E",
+        )
+        self.generation_success_card.grid(
+            row=5,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 10),
+        )
+        tk.Label(
+            self.generation_success_card,
+            text="✓ Audio generated successfully",
+            bg="#0B2F35",
+            fg="#E6F3FF",
+            font=("Inter", 14, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        self.generation_success_card.grid_remove()
 
         action_row = ttk.Frame(self.conversion_card, style="Card.TFrame")
-        action_row.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        action_row.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         action_row.columnconfigure(0, weight=1)
         action_row.columnconfigure(1, weight=1)
 
@@ -2881,7 +2964,7 @@ class PDFAudiobookApp(tk.Tk):
 
         self.convert_button = ttk.Button(
             self.conversion_card,
-            text="Generate Audio",
+            text="Generate Audiobook",
             style="Primary.TButton",
             command=self._start_conversion,
         )
@@ -3518,36 +3601,96 @@ class PDFAudiobookApp(tk.Tk):
         )
         return card
 
-    def _draw_header_orbit(self) -> None:
-        """Draw a subtle spatial audio accent in the header."""
+    def _animate_brand_header(self) -> None:
+        """Draw a lightweight breathing brand glow."""
 
-        if not hasattr(self, "header_orbit"):
+        if not hasattr(self, "brand_mark_canvas"):
             return
-        canvas = self.header_orbit
+        self._brand_pulse_step = (self._brand_pulse_step + 1) % 120
+        pulse = (1 + math.sin(self._brand_pulse_step / 120 * math.tau)) / 2
+        self._draw_brand_title_glow(pulse)
+        self._draw_brand_mark(pulse)
+        self.after(80, self._animate_brand_header)
+
+    def _draw_brand_title_glow(self, pulse: float) -> None:
+        """Paint a subtle cyan brand accent beside the wordmark."""
+
+        canvas = self.brand_glow_canvas
         canvas.delete("all")
-        canvas.create_arc(16, 9, 150, 54, start=18, extent=246, outline="#164E63", width=1, style=tk.ARC)
-        canvas.create_arc(30, 15, 138, 48, start=205, extent=92, outline="#22D3EE", width=2, style=tk.ARC)
-        canvas.create_oval(116, 18, 124, 26, fill="#14F1D9", outline="")
-        canvas.create_oval(38, 39, 43, 44, fill="#F97316", outline="")
-        for index, height in enumerate((14, 24, 36, 26, 16)):
-            x = 68 + index * 8
-            y = 31 - height / 2
-            canvas.create_line(x, y, x, y + height, fill="#67E8F9", width=2)
-
-    def _start_logo_pulse(self) -> None:
-        """Start a gentle logo pulse that feels like a quiet audio wave."""
-
-        if not hasattr(self, "logo_shell"):
-            return
-        self._pulse_logo(True)
-
-    def _pulse_logo(self, active: bool) -> None:
-        if not hasattr(self, "logo_shell"):
-            return
-        self.logo_shell.configure(
-            highlightbackground="#22D3EE" if active else "#1E3A5F"
+        glow = self._blend_color("#0B1224", "#22D3EE", 0.18 + pulse * 0.18)
+        accent = self._blend_color("#14B8A6", "#67E8F9", pulse)
+        canvas.create_oval(0, 8, 20, 48, fill=glow, outline="")
+        canvas.create_line(
+            13,
+            12,
+            13,
+            46,
+            fill=accent,
+            width=4,
+            capstyle=tk.ROUND,
         )
-        self.after(1800 if active else 3200, lambda: self._pulse_logo(not active))
+
+    def _draw_brand_mark(self, pulse: float) -> None:
+        """Draw an integrated sound-wave mark in EchoLearn colors."""
+
+        canvas = self.brand_mark_canvas
+        canvas.delete("all")
+        accent = self._blend_color("#14B8A6", "#67E8F9", pulse)
+        muted = self._blend_color("#164E63", "#22D3EE", 0.25 + pulse * 0.25)
+        glow = self._blend_color("#060B1A", "#164E63", 0.35 + pulse * 0.18)
+
+        canvas.create_oval(18, 16, 172, 86, fill=glow, outline="")
+        canvas.create_arc(
+            28,
+            12,
+            166,
+            88,
+            start=205,
+            extent=270,
+            outline=muted,
+            width=2,
+            style=tk.ARC,
+        )
+        canvas.create_arc(
+            50,
+            24,
+            145,
+            76,
+            start=205,
+            extent=270,
+            outline=accent,
+            width=3,
+            style=tk.ARC,
+        )
+        bar_heights = (24, 42, 62, 42, 24)
+        for index, height in enumerate(bar_heights):
+            x = 68 + index * 13
+            y = 51 - height / 2
+            width = 5 if index == 2 else 4
+            color = accent if index == 2 else "#67E8F9"
+            canvas.create_line(
+                x,
+                y,
+                x,
+                y + height,
+                fill=color,
+                width=width,
+                capstyle=tk.ROUND,
+            )
+        canvas.create_oval(138, 29, 148, 39, fill=accent, outline="")
+        canvas.create_oval(44, 59, 51, 66, fill="#22D3EE", outline="")
+
+    @staticmethod
+    def _blend_color(start_hex: str, end_hex: str, ratio: float) -> str:
+        """Blend two hex colors."""
+
+        ratio = max(0.0, min(1.0, ratio))
+        start = tuple(int(start_hex[index : index + 2], 16) for index in (1, 3, 5))
+        end = tuple(int(end_hex[index : index + 2], 16) for index in (1, 3, 5))
+        return "#%02x%02x%02x" % tuple(
+            round(start[channel] + (end[channel] - start[channel]) * ratio)
+            for channel in range(3)
+        )
 
     def _create_mode_option(
         self,
@@ -3927,11 +4070,6 @@ class PDFAudiobookApp(tk.Tk):
                 padx=0,
                 pady=(12, 0),
             )
-            self.mode_description_label.grid_configure(
-                row=3,
-                column=0,
-                columnspan=1,
-            )
         else:
             self.audiobook_mode_card.grid_configure(
                 row=1,
@@ -3944,12 +4082,6 @@ class PDFAudiobookApp(tk.Tk):
                 column=1,
                 padx=(10, 0),
                 pady=(18, 0),
-            )
-            self.mode_description_label.grid_configure(
-                row=2,
-                column=0,
-                columnspan=2,
-                pady=(16, 0),
             )
         self._sync_lesson_builder_visibility()
 
@@ -4029,6 +4161,29 @@ class PDFAudiobookApp(tk.Tk):
         ttk.Label(title_frame, text=subtitle, style="Muted.TLabel").grid(
             row=2, column=1, sticky="w", pady=(2, 0)
         )
+
+    def _add_section_header(
+        self,
+        parent: tk.Widget,
+        title: str,
+        subtitle: str,
+    ) -> None:
+        """Add a clean product-style section header."""
+
+        header = ttk.Frame(parent, style="Card.TFrame")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text=title, style="Section.TLabel").grid(
+            row=0,
+            column=0,
+            sticky="w",
+        )
+        ttk.Label(
+            header,
+            text=subtitle,
+            style="Muted.TLabel",
+            wraplength=680,
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
     def _draw_icon(self, canvas: tk.Canvas, icon_name: str) -> None:
         """Draw small section icons without external image dependencies."""
@@ -4343,6 +4498,9 @@ class PDFAudiobookApp(tk.Tk):
 
         if pdf_path.suffix.lower() != ".pdf":
             self.pdf_select_area.reset_state()
+            self._reset_pdf_summary()
+            self.pdf_path.set("")
+            self.output_path.set("")
             messagebox.showerror(
                 "Invalid file",
                 "That file is not a PDF. Please choose a PDF file.",
@@ -4353,13 +4511,16 @@ class PDFAudiobookApp(tk.Tk):
             page_count = self._read_pdf_page_count(pdf_path)
         except Exception as exc:
             self.pdf_select_area.reset_state()
+            self._reset_pdf_summary()
+            self.pdf_path.set("")
+            self.output_path.set("")
             messagebox.showerror("PDF could not be loaded", str(exc))
         else:
             self.pdf_path.set(str(pdf_path))
             self._last_input_folder = str(pdf_path.parent)
-            if not self.output_path.get():
-                self._set_default_output_for_pdf(pdf_path)
+            self._set_default_output_for_pdf(pdf_path)
             self._apply_page_count(page_count)
+            self._show_pdf_summary(pdf_path, page_count)
             self.pdf_select_area.set_selected_file(pdf_path.name)
             self._save_settings()
             if self._conversion_mode_value() == "echolesson":
@@ -4368,37 +4529,19 @@ class PDFAudiobookApp(tk.Tk):
     def _set_default_output_for_pdf(self, pdf_path: Path) -> None:
         """Set a new MP3 path using the configured default output folder."""
 
-        output_folder = self.default_output_folder.get().strip()
-        if output_folder:
-            output_path = Path(output_folder) / f"{pdf_path.stem}.mp3"
-        else:
-            output_path = pdf_path.with_suffix(".mp3")
+        output_path = self._default_output_path_for_pdf(pdf_path)
         self.output_path.set(str(output_path))
         self._last_output_folder = str(output_path.parent)
 
-    def _choose_output(self) -> None:
-        """Ask the user where the MP3 should be saved."""
+    def _default_output_path_for_pdf(self, pdf_path: Path) -> Path:
+        """Return the automatic MP3 output path for a selected PDF."""
 
-        initial_file = "audiobook.mp3"
-        if self.pdf_path.get():
-            initial_file = f"{Path(self.pdf_path.get()).stem}.mp3"
-        initial_directory = (
-            self.default_output_folder.get().strip()
-            or self._last_output_folder
-            or None
-        )
-
-        path = filedialog.asksaveasfilename(
-            title="Save audiobook as",
-            defaultextension=".mp3",
-            initialfile=initial_file,
-            initialdir=initial_directory,
-            filetypes=[("MP3 files", "*.mp3"), ("All files", "*.*")],
-        )
-        if path:
-            self.output_path.set(path)
-            self._last_output_folder = str(Path(path).parent)
-            self._save_settings()
+        output_folder = self.default_output_folder.get().strip()
+        if output_folder:
+            folder = Path(output_folder)
+        else:
+            folder = Path.home() / "Documents" / APP_TITLE
+        return folder / f"{pdf_path.stem}.mp3"
 
     def _open_last_audio(self) -> None:
         """Open the most recently generated MP3."""
@@ -4465,6 +4608,7 @@ class PDFAudiobookApp(tk.Tk):
 
         count = self._read_pdf_page_count(pdf_path)
         self._apply_page_count(count)
+        self._show_pdf_summary(pdf_path, count)
 
     @staticmethod
     def _read_pdf_page_count(pdf_path: Path) -> int:
@@ -4484,6 +4628,73 @@ class PDFAudiobookApp(tk.Tk):
         self.page_count.set(f"Pages: {count}")
         self.status_text.set("PDF loaded. Review options, then generate audio.")
 
+    def _show_pdf_summary(self, pdf_path: Path, page_count: int) -> None:
+        """Show a compact selected-PDF summary on the main screen."""
+
+        self.pdf_summary_name.set(pdf_path.name)
+        self.pdf_summary_pages.set(
+            f"Pages: {page_count}"
+        )
+        self.pdf_summary_duration.set(
+            "Estimated Audio: "
+            f"{self._estimated_audio_duration_label(pdf_path, page_count)}"
+        )
+        self.pdf_select_area.grid_remove()
+        if hasattr(self, "choose_pdf_button"):
+            self.choose_pdf_button.configure(text="Change PDF")
+        self.pdf_summary_card.grid()
+
+    def _reset_pdf_summary(self) -> None:
+        """Hide selected-PDF summary information."""
+
+        self.pdf_summary_name.set("No PDF selected")
+        self.pdf_summary_pages.set("Pages: --")
+        self.pdf_summary_duration.set("Estimated Audio: --")
+        if hasattr(self, "pdf_summary_card"):
+            self.pdf_summary_card.grid_remove()
+        if hasattr(self, "pdf_select_area"):
+            self.pdf_select_area.grid()
+        if hasattr(self, "choose_pdf_button"):
+            self.choose_pdf_button.configure(text="Choose PDF")
+
+    def _estimated_audio_duration_label(self, pdf_path: Path, page_count: int) -> str:
+        """Return a lightweight estimated listening duration."""
+
+        word_count = self._estimate_pdf_word_count(pdf_path)
+        if word_count:
+            estimated_seconds = max(30, round((word_count / 150) * 60))
+        else:
+            estimated_seconds = max(60, round(page_count * 2 * 60))
+        return self._format_duration(estimated_seconds)
+
+    @staticmethod
+    def _estimate_pdf_word_count(pdf_path: Path) -> int:
+        """Count extractable words for duration only, without changing conversion."""
+
+        try:
+            reader = PdfReader(str(pdf_path))
+            text_parts = [
+                page.extract_text() or ""
+                for page in reader.pages
+            ]
+        except Exception:
+            return 0
+        return len(WORD_PATTERN.findall("\n".join(text_parts)))
+
+    @staticmethod
+    def _format_duration(total_seconds: int) -> str:
+        """Format a duration for the PDF summary card."""
+
+        minutes, seconds = divmod(total_seconds, 60)
+        if minutes < 60:
+            if seconds and minutes < 20:
+                return f"{minutes} min {seconds} sec"
+            return f"{max(1, round(total_seconds / 60))} min"
+        hours, minutes = divmod(round(total_seconds / 60), 60)
+        if minutes == 0:
+            return f"{hours} hr"
+        return f"{hours} hr {minutes} min"
+
     def _start_conversion(self) -> None:
         """Validate user input and start the background conversion worker."""
 
@@ -4499,6 +4710,7 @@ class PDFAudiobookApp(tk.Tk):
         try:
             settings = self._get_settings()
         except ValueError as exc:
+            self.status_text.set(str(exc))
             messagebox.showerror("Missing information", str(exc))
             return
 
@@ -4506,6 +4718,8 @@ class PDFAudiobookApp(tk.Tk):
         self.convert_button.configure(state=tk.DISABLED)
         self.open_audio_button.configure(state=tk.DISABLED)
         self.reveal_mp3_button.configure(state=tk.DISABLED)
+        if hasattr(self, "generation_success_card"):
+            self.generation_success_card.grid_remove()
         self._refresh_control_cursors()
         self._last_output_path = None
         self._set_progress(0)
@@ -4546,12 +4760,14 @@ class PDFAudiobookApp(tk.Tk):
     def _get_settings(self) -> ConversionSettings:
         """Collect validated settings from the UI controls."""
 
+        if self.selected_conversion_mode.get() not in CONVERSION_MODE_OPTIONS:
+            raise ValueError("Please select Audiobook or EchoLesson.")
         if not self.pdf_path.get():
-            raise ValueError("Please select a PDF file.")
-        if not self.output_path.get():
-            raise ValueError("Please choose where to save the MP3 file.")
+            raise ValueError("Please choose a PDF first.")
 
         pdf_path = Path(self.pdf_path.get())
+        if not self.output_path.get():
+            self._set_default_output_for_pdf(pdf_path)
         output_path = Path(self.output_path.get())
 
         if not pdf_path.exists():
@@ -4559,6 +4775,11 @@ class PDFAudiobookApp(tk.Tk):
         if output_path.suffix.lower() != ".mp3":
             output_path = output_path.with_suffix(".mp3")
             self.output_path.set(str(output_path))
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValueError("EchoLearn could not create the output folder.") from exc
+        self._last_output_folder = str(output_path.parent)
 
         conversion_mode = self._conversion_mode_value()
         lesson_markup = self._lesson_structure_markup()
@@ -4723,7 +4944,7 @@ class PDFAudiobookApp(tk.Tk):
             self.convert_button.configure(text="Generate Learning Audio")
         else:
             self.conversion_mode_description.set(AUDIOBOOK_MODE_DESCRIPTION)
-            self.convert_button.configure(text="Generate Audio")
+            self.convert_button.configure(text="Generate Audiobook")
         self._refresh_mode_cards()
         self._sync_lesson_builder_visibility()
         if self._conversion_mode_value() == "echolesson" and self.pdf_path.get():
@@ -4732,21 +4953,12 @@ class PDFAudiobookApp(tk.Tk):
     def _sync_lesson_builder_visibility(self) -> None:
         """Show only the controls relevant to the selected experience."""
 
-        if self._conversion_mode_value() == "echolesson":
-            self._sync_content_summary_visibility()
-        else:
-            self.content_summary_card.grid_remove()
+        self._sync_content_summary_visibility()
 
     def _sync_content_summary_visibility(self) -> None:
-        """Show the compact content summary only when it has useful content."""
+        """Keep lesson analysis off the simplified main screen."""
 
-        if (
-            self._conversion_mode_value() == "echolesson"
-            and bool(self._lesson_structure_markup())
-        ):
-            self.content_summary_card.grid()
-        else:
-            self.content_summary_card.grid_remove()
+        return
 
     def _generate_lesson_structure(self, *, silent: bool = False) -> bool:
         """Generate deterministic EchoLearn Markup from the selected PDF."""
@@ -5190,8 +5402,10 @@ class PDFAudiobookApp(tk.Tk):
                     self._last_output_path = path
                     self.open_audio_button.configure(state=tk.NORMAL)
                     self.reveal_mp3_button.configure(state=tk.NORMAL)
+                    if hasattr(self, "generation_success_card"):
+                        self.generation_success_card.grid()
                     self._refresh_control_cursors()
-                    self.status_text.set(f"Done: {path}")
+                    self.status_text.set(f"Audio generated successfully: {path}")
                     warning_text = ""
                     if result.warnings:
                         warning_text = "\n\nWarnings:\n" + "\n".join(result.warnings)
