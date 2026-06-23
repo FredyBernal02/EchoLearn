@@ -2905,9 +2905,10 @@ class PDFAudiobookApp(tk.Tk):
         self._settings_window = modal
         modal.title("EchoLearn Settings")
         modal.configure(bg="#060B1A")
-        modal.geometry("760x620")
-        modal.minsize(520, 420)
+        modal.geometry("860x620")
+        modal.minsize(640, 440)
         modal.transient(self)
+        modal.protocol("WM_DELETE_WINDOW", lambda: self._close_settings_modal(modal))
 
         shell = ttk.Frame(modal, padding=(24, 22), style="App.TFrame")
         shell.pack(fill=tk.BOTH, expand=True)
@@ -2923,14 +2924,70 @@ class PDFAudiobookApp(tk.Tk):
             style="Subtitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(2, 16))
 
-        scroll_area = ttk.Frame(shell, style="App.TFrame")
-        scroll_area.grid(row=2, column=0, sticky="nsew")
+        settings_body = ttk.Frame(shell, style="App.TFrame")
+        settings_body.grid(row=2, column=0, sticky="nsew")
+        settings_body.columnconfigure(1, weight=1)
+        settings_body.rowconfigure(0, weight=1)
+
+        nav = tk.Frame(
+            settings_body,
+            bg="#0B1224",
+            padx=10,
+            pady=10,
+            highlightthickness=1,
+            highlightbackground="#1E3A5F",
+        )
+        nav.grid(row=0, column=0, sticky="nsw", padx=(0, 14))
+        nav.grid_propagate(False)
+        nav.configure(width=172)
+
+        self._settings_selected_category = tk.StringVar(value="General")
+        self._settings_nav_items: dict[str, tk.Frame] = {}
+        self._settings_nav_labels: dict[str, tk.Label] = {}
+        for row, category in enumerate(("General", "Audio", "EchoLesson", "Advanced")):
+            item = self._create_settings_nav_item(nav, category)
+            item.grid(row=row, column=0, sticky="ew", pady=(0, 6))
+            self._settings_nav_items[category] = item
+
+        content_shell = tk.Frame(
+            settings_body,
+            bg="#0F172A",
+            padx=20,
+            pady=18,
+            highlightthickness=1,
+            highlightbackground="#1E3A5F",
+        )
+        content_shell.grid(row=0, column=1, sticky="nsew")
+        content_shell.columnconfigure(0, weight=1)
+        content_shell.rowconfigure(2, weight=1)
+
+        self._settings_section_title = tk.StringVar()
+        self._settings_section_description = tk.StringVar()
+        tk.Label(
+            content_shell,
+            textvariable=self._settings_section_title,
+            bg="#0F172A",
+            fg="#E6F3FF",
+            font=("Inter", 24, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            content_shell,
+            textvariable=self._settings_section_description,
+            bg="#0F172A",
+            fg="#8EA4BF",
+            font=("Inter", 13),
+            justify=tk.LEFT,
+            wraplength=520,
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        scroll_area = ttk.Frame(content_shell, style="Card.TFrame")
+        scroll_area.grid(row=2, column=0, sticky="nsew", pady=(16, 0))
         scroll_area.columnconfigure(0, weight=1)
         scroll_area.rowconfigure(0, weight=1)
 
         settings_canvas = tk.Canvas(
             scroll_area,
-            bg="#060B1A",
+            bg="#0F172A",
             highlightthickness=0,
             bd=0,
         )
@@ -2941,10 +2998,9 @@ class PDFAudiobookApp(tk.Tk):
             command=settings_canvas.yview,
             style="Echo.Vertical.TScrollbar",
         )
-        settings_scrollbar.grid(row=0, column=1, sticky="ns", padx=(10, 0))
         settings_canvas.configure(yscrollcommand=settings_scrollbar.set)
 
-        body = ttk.Frame(settings_canvas, style="App.TFrame")
+        body = ttk.Frame(settings_canvas, style="Card.TFrame")
         body.columnconfigure(0, weight=1)
         settings_window = settings_canvas.create_window(
             (0, 0),
@@ -2963,142 +3019,10 @@ class PDFAudiobookApp(tk.Tk):
             "<Configure>",
             lambda _event: self._update_settings_scroll_region(settings_canvas),
         )
-
-        general_card = self._create_settings_section(body, "General", 0)
-        self._add_folder_setting_row(general_card, 1)
-        self._add_combobox_setting_row(
-            general_card,
-            2,
-            "Theme preference",
-            self.theme_preference,
-            list(THEME_OPTIONS),
-        )
-        ToggleSwitch(
-            general_card,
-            text="Remember last selected mode",
-            variable=self.remember_last_selected_mode,
-            background="#0F172A",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(12, 0))
-
-        audio_card = self._create_settings_section(body, "Audio", 1)
-        self._add_combobox_setting_row(
-            audio_card,
-            1,
-            "Default English audiobook voice",
-            self.selected_english_voice,
-            [option.label for option in self._english_voice_options]
-            or [DEFAULT_ENGLISH_VOICE],
-        )
-        self._add_combobox_setting_row(
-            audio_card,
-            2,
-            "Default Spanish audiobook voice",
-            self.selected_spanish_voice,
-            [option.label for option in self._spanish_voice_options]
-            or [DEFAULT_SPANISH_VOICE],
-        )
-        self._add_combobox_setting_row(
-            audio_card,
-            3,
-            "Default speaker 1 voice",
-            self.selected_speaker_1_voice,
-            [option.label for option in self._all_voice_options()]
-            or [DEFAULT_ENGLISH_VOICE],
-        )
-        self._add_combobox_setting_row(
-            audio_card,
-            4,
-            "Default speaker 2 voice",
-            self.selected_speaker_2_voice,
-            [option.label for option in self._all_voice_options()]
-            or [DEFAULT_SPANISH_VOICE],
-        )
-        self._add_combobox_setting_row(
-            audio_card,
-            5,
-            "Default speed",
-            self.selected_rate_label,
-            list(RATE_OPTIONS),
-            on_select=self._update_rate_from_label,
-        )
-        self._add_combobox_setting_row(
-            audio_card,
-            6,
-            "Default volume",
-            self.selected_volume_label,
-            list(VOLUME_OPTIONS),
-            on_select=self._update_volume_from_label,
-        )
-        ToggleSwitch(
-            audio_card,
-            text="Auto-detect language",
-            variable=self.auto_detect_language,
-            background="#0F172A",
-        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(12, 0))
-        self._add_combobox_setting_row(
-            audio_card,
-            8,
-            "Default language for untagged text",
-            self.default_untagged_language,
-            ["English", "Spanish"],
-        )
-        ToggleSwitch(
-            audio_card,
-            text="Auto Learning Pauses",
-            variable=self.auto_learning_pauses,
-            background="#0F172A",
-        ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(12, 0))
-        self._add_combobox_setting_row(
-            audio_card,
-            10,
-            "Auto pause duration",
-            self.selected_auto_pause_label,
-            list(AUTO_PAUSE_OPTIONS),
-            on_select=self._update_auto_pause_from_label,
-        )
-        self._add_combobox_setting_row(
-            audio_card,
-            11,
-            "Auto pause by",
-            self.selected_auto_pause_segmentation,
-            list(AUTO_PAUSE_SEGMENTATION_OPTIONS),
-        )
-
-        lesson_card = self._create_settings_section(body, "EchoLesson", 2)
-        ttk.Label(lesson_card, text="Default lesson generation mode").grid(
-            row=1, column=0, sticky="w", pady=(12, 0)
-        )
-        ttk.Radiobutton(
-            lesson_card,
-            text="Standard",
-            value="Standard",
-            variable=self.echolesson_generation_mode,
-        ).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(12, 0))
-        ttk.Radiobutton(
-            lesson_card,
-            text="AI Enhanced",
-            value="AI Enhanced",
-            variable=self.echolesson_generation_mode,
-            state=tk.DISABLED,
-        ).grid(row=2, column=1, sticky="w", padx=(12, 0), pady=(4, 0))
-        ttk.Label(lesson_card, text="Coming soon", style="Muted.TLabel").grid(
-            row=2, column=2, sticky="w", padx=(8, 0), pady=(4, 0)
-        )
-
-        future_card = self._create_settings_section(body, "Developer / Future", 3)
-        ttk.Label(future_card, text="OpenAI API Key placeholder").grid(
-            row=1, column=0, sticky="w", pady=(12, 0)
-        )
-        ttk.Entry(
-            future_card,
-            textvariable=self.openai_api_key_placeholder,
-            show="*",
-        ).grid(row=1, column=1, columnspan=2, sticky="ew", padx=(12, 0), pady=(12, 0))
-        ttk.Label(
-            future_card,
-            text="Coming soon. Stored locally as a placeholder and not used yet.",
-            style="Muted.TLabel",
-        ).grid(row=2, column=1, columnspan=2, sticky="w", padx=(12, 0), pady=(6, 0))
+        self._settings_content_frame = body
+        self._settings_canvas = settings_canvas
+        self._settings_scrollbar = settings_scrollbar
+        self._select_settings_category("General")
 
         button_row = ttk.Frame(shell, style="App.TFrame")
         button_row.grid(row=3, column=0, sticky="ew", pady=(18, 0))
@@ -3112,6 +3036,244 @@ class PDFAudiobookApp(tk.Tk):
         self._bind_settings_scroll_events(modal, settings_canvas)
         self._apply_interactive_cursors(modal)
         modal.focus_force()
+
+    def _create_settings_nav_item(self, parent: tk.Widget, category: str) -> tk.Frame:
+        """Create one clickable Settings category item."""
+
+        item = tk.Frame(
+            parent,
+            bg="#0B1224",
+            padx=12,
+            pady=10,
+            cursor=self._interactive_cursor(),
+        )
+        label = tk.Label(
+            item,
+            text=category,
+            bg="#0B1224",
+            fg="#8EA4BF",
+            font=("Inter", 13, "bold"),
+            anchor="w",
+            cursor=self._interactive_cursor(),
+        )
+        label.pack(fill=tk.X)
+        self._settings_nav_labels[category] = label
+        for widget in (item, label):
+            widget.bind(
+                "<Button-1>",
+                lambda _event, selected=category: self._select_settings_category(
+                    selected
+                ),
+            )
+            widget.bind("<Enter>", self._on_interactive_cursor_enter, add="+")
+            widget.bind("<Leave>", self._on_interactive_cursor_leave, add="+")
+        return item
+
+    def _select_settings_category(self, category: str) -> None:
+        """Switch the Settings right panel to the selected category."""
+
+        self._settings_selected_category.set(category)
+        self._refresh_settings_nav()
+        for child in self._settings_content_frame.winfo_children():
+            child.destroy()
+
+        descriptions = {
+            "General": "Defaults that shape how EchoLearn opens and remembers your workflow.",
+            "Audio": "Voice, speed, and volume defaults used automatically when generating audio.",
+            "EchoLesson": "Lesson-building preferences for structured learning audio.",
+            "Advanced": "Future AI and export configuration placeholders.",
+        }
+        self._settings_section_title.set(category)
+        self._settings_section_description.set(descriptions[category])
+
+        if category == "General":
+            self._build_general_settings(self._settings_content_frame)
+        elif category == "Audio":
+            self._build_audio_settings(self._settings_content_frame)
+        elif category == "EchoLesson":
+            self._build_echolesson_settings(self._settings_content_frame)
+        else:
+            self._build_advanced_settings(self._settings_content_frame)
+
+        self._settings_content_frame.update_idletasks()
+        self._settings_canvas.yview_moveto(0)
+        self._update_settings_scroll_region(self._settings_canvas)
+        self._apply_interactive_cursors(self._settings_window)
+
+    def _refresh_settings_nav(self) -> None:
+        """Update Settings category highlight state."""
+
+        selected = self._settings_selected_category.get()
+        for category, item in self._settings_nav_items.items():
+            active = category == selected
+            bg = "#0B2F35" if active else "#0B1224"
+            fg = "#E6F3FF" if active else "#8EA4BF"
+            item.configure(bg=bg, highlightthickness=1 if active else 0)
+            if active:
+                item.configure(highlightbackground="#22D3EE")
+            self._settings_nav_labels[category].configure(bg=bg, fg=fg)
+
+    def _build_general_settings(self, parent: tk.Widget) -> None:
+        card = self._create_settings_section(parent, "Workflow Defaults", 0)
+        self._add_folder_setting_row(card, 1)
+        self._add_combobox_setting_row(
+            card,
+            2,
+            "Theme preference",
+            self.theme_preference,
+            list(THEME_OPTIONS),
+        )
+        ToggleSwitch(
+            card,
+            text="Remember last selected mode",
+            variable=self.remember_last_selected_mode,
+            background="#0F172A",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(12, 0))
+
+    def _build_audio_settings(self, parent: tk.Widget) -> None:
+        card = self._create_settings_section(parent, "Audio Defaults", 0)
+        self._add_combobox_setting_row(
+            card,
+            1,
+            "Default English audiobook voice",
+            self.selected_english_voice,
+            [option.label for option in self._english_voice_options]
+            or [DEFAULT_ENGLISH_VOICE],
+        )
+        self._add_combobox_setting_row(
+            card,
+            2,
+            "Default Spanish audiobook voice",
+            self.selected_spanish_voice,
+            [option.label for option in self._spanish_voice_options]
+            or [DEFAULT_SPANISH_VOICE],
+        )
+        self._add_combobox_setting_row(
+            card,
+            3,
+            "Default speaker 1 voice",
+            self.selected_speaker_1_voice,
+            [option.label for option in self._all_voice_options()]
+            or [DEFAULT_ENGLISH_VOICE],
+        )
+        self._add_combobox_setting_row(
+            card,
+            4,
+            "Default speaker 2 voice",
+            self.selected_speaker_2_voice,
+            [option.label for option in self._all_voice_options()]
+            or [DEFAULT_SPANISH_VOICE],
+        )
+        self._add_combobox_setting_row(
+            card,
+            5,
+            "Default speed",
+            self.selected_rate_label,
+            list(RATE_OPTIONS),
+            on_select=self._update_rate_from_label,
+        )
+        self._add_combobox_setting_row(
+            card,
+            6,
+            "Default volume",
+            self.selected_volume_label,
+            list(VOLUME_OPTIONS),
+            on_select=self._update_volume_from_label,
+        )
+
+        language_card = self._create_settings_section(parent, "Language & Pauses", 1)
+        ToggleSwitch(
+            language_card,
+            text="Auto-detect language",
+            variable=self.auto_detect_language,
+            background="#0F172A",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        self._add_combobox_setting_row(
+            language_card,
+            2,
+            "Default language for untagged text",
+            self.default_untagged_language,
+            ["English", "Spanish"],
+        )
+        ToggleSwitch(
+            language_card,
+            text="Auto Learning Pauses",
+            variable=self.auto_learning_pauses,
+            background="#0F172A",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        self._add_combobox_setting_row(
+            language_card,
+            4,
+            "Auto pause duration",
+            self.selected_auto_pause_label,
+            list(AUTO_PAUSE_OPTIONS),
+            on_select=self._update_auto_pause_from_label,
+        )
+        self._add_combobox_setting_row(
+            language_card,
+            5,
+            "Auto pause by",
+            self.selected_auto_pause_segmentation,
+            list(AUTO_PAUSE_SEGMENTATION_OPTIONS),
+        )
+
+    def _build_echolesson_settings(self, parent: tk.Widget) -> None:
+        card = self._create_settings_section(parent, "Lesson Generation Mode", 0)
+        tk.Label(
+            card,
+            text="Choose how EchoLearn should prepare structured lessons.",
+            bg="#0F172A",
+            fg="#8EA4BF",
+            font=("Inter", 13),
+            justify=tk.LEFT,
+            wraplength=540,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        ttk.Radiobutton(
+            card,
+            text="Standard",
+            value="Standard",
+            variable=self.echolesson_generation_mode,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ttk.Radiobutton(
+            card,
+            text="AI Enhanced",
+            value="AI Enhanced",
+            variable=self.echolesson_generation_mode,
+            state=tk.DISABLED,
+        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
+        tk.Label(
+            card,
+            text="Coming Soon",
+            bg="#0B2F35",
+            fg="#67E8F9",
+            font=("Inter", 11, "bold"),
+            padx=10,
+            pady=4,
+        ).grid(row=3, column=1, sticky="w", padx=(10, 0), pady=(8, 0))
+        tk.Label(
+            card,
+            text=(
+                "AI Enhanced will use OpenAI to automatically build structured "
+                "learning lessons from PDFs."
+            ),
+            bg="#0F172A",
+            fg="#8EA4BF",
+            font=("Inter", 13),
+            justify=tk.LEFT,
+            wraplength=540,
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(14, 0))
+
+    def _build_advanced_settings(self, parent: tk.Widget) -> None:
+        card = self._create_settings_section(parent, "Future Configuration", 0)
+        self._add_placeholder_entry_row(
+            card,
+            1,
+            "OpenAI API Key",
+            self.openai_api_key_placeholder,
+            "Coming Soon",
+        )
+        self._add_placeholder_status_row(card, 2, "Future AI Provider", "Coming Soon")
+        self._add_placeholder_status_row(card, 3, "Future Export Settings", "Coming Soon")
 
     def _resize_settings_scroll_content(
         self,
@@ -3128,6 +3290,32 @@ class PDFAudiobookApp(tk.Tk):
         """Update the scrollable bounds for the Settings modal."""
 
         canvas.configure(scrollregion=canvas.bbox("all"))
+        self._sync_settings_scrollbar_visibility(canvas)
+
+    def _sync_settings_scrollbar_visibility(self, canvas: tk.Canvas) -> None:
+        """Show the Settings scrollbar only when content exceeds the viewport."""
+
+        if not hasattr(self, "_settings_scrollbar"):
+            return
+        canvas.update_idletasks()
+        scroll_region = canvas.bbox("all")
+        if scroll_region is None:
+            needs_scrollbar = False
+        else:
+            content_height = scroll_region[3] - scroll_region[1]
+            needs_scrollbar = content_height > canvas.winfo_height() + 1
+
+        if needs_scrollbar:
+            if not self._settings_scrollbar.winfo_ismapped():
+                self._settings_scrollbar.grid(
+                    row=0,
+                    column=1,
+                    sticky="ns",
+                    padx=(10, 0),
+                )
+        elif self._settings_scrollbar.winfo_ismapped():
+            self._settings_scrollbar.grid_remove()
+            canvas.yview_moveto(0)
 
     def _bind_settings_scroll_events(
         self,
@@ -3253,6 +3441,62 @@ class PDFAudiobookApp(tk.Tk):
             self._save_settings()
             if self.pdf_path.get():
                 self._set_default_output_for_pdf(Path(self.pdf_path.get()))
+
+    def _add_placeholder_entry_row(
+        self,
+        parent: tk.Widget,
+        row: int,
+        label: str,
+        variable: tk.StringVar,
+        status: str,
+    ) -> None:
+        """Add a future setting row with a local placeholder entry."""
+
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=(12, 0))
+        ttk.Entry(parent, textvariable=variable, show="*").grid(
+            row=row,
+            column=1,
+            sticky="ew",
+            padx=(12, 10),
+            pady=(12, 0),
+        )
+        self._create_status_pill(parent, status).grid(
+            row=row,
+            column=2,
+            sticky="e",
+            pady=(12, 0),
+        )
+
+    def _add_placeholder_status_row(
+        self,
+        parent: tk.Widget,
+        row: int,
+        label: str,
+        status: str,
+    ) -> None:
+        """Add a future setting row that is intentionally not functional yet."""
+
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=(12, 0))
+        self._create_status_pill(parent, status).grid(
+            row=row,
+            column=1,
+            sticky="w",
+            padx=(12, 0),
+            pady=(12, 0),
+        )
+
+    def _create_status_pill(self, parent: tk.Widget, text: str) -> tk.Label:
+        """Create a small EchoLearn status badge."""
+
+        return tk.Label(
+            parent,
+            text=text,
+            bg="#0B2F35",
+            fg="#67E8F9",
+            font=("Inter", 11, "bold"),
+            padx=10,
+            pady=4,
+        )
 
     def _close_settings_modal(self, modal: tk.Toplevel) -> None:
         """Save settings and close the settings modal."""
